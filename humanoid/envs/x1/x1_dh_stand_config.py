@@ -319,43 +319,28 @@ class X1DHStandCfg(LeggedRobotCfg):
         only_positive_rewards = True
         # tracking reward = exp(-error*sigma)
         tracking_sigma = 5 
-        max_contact_force = 700  # forces above this value are penalized
+        max_contact_force = 700  # forces above this value are penalized (safety reference)
         
         class scales:
-            ref_joint_pos = 2.2
-            feet_clearance = 1.5
+            # ============================================================
+            # 精简 Reward 设计 (29→10): 稳定 + 省力 + 速度 + 安全
+            # ============================================================
+            # ① 速度跟踪 (Velocity Tracking) — 唯一任务目标
+            velocity_tracking = 3.0
+            # ② 步态引导 (Gait Guidance) — 参考轨迹 + 相位对齐
+            ref_joint_pos = 1.5
             feet_contact_number = 2.0
-            # gait
-            feet_air_time = 1.2
+            feet_clearance = 1.2
+            # ③ 稳定性 (Stability) — 合并 orientation/base_height/base_acc/default_joint_pos/feet_rotation
+            stability = 2.0
+            # ④ 能效 (Efficiency) — 机械功率替代 torques²/dof_vel/dof_acc/smoothness/contact_forces
+            efficiency = -0.02
+            # ⑤ 脚底打滑
             foot_slip = -0.1
-            feet_distance = 0.2
-            knee_distance = 0.2
-            swing_foot_forward = 0.5  # 鼓励摆动相脚向前迈步
-            foot_landing_pitch = 0.3  # 落地 pitch 微上翘
-            # contact 
-            feet_contact_forces = -0.01
-            # vel tracking
-            tracking_lin_vel = 1.8
-            tracking_ang_vel = 1.1
-            vel_mismatch_exp = 0.5  # lin_z; ang x,y
-            low_speed = 0.2
-            track_vel_hard = 0.5
-            # base pos
-            default_joint_pos = 1.0
-            orientation = 1.
-            feet_rotation = 0.3
-            base_height = 0.2
-            base_acc = 0.2
-            # energy
-            action_smoothness = -0.002
-            torques = -8e-9
-            dof_vel = -2e-8
-            dof_acc = -1e-7
+            # ⑥ 安全硬约束
             collision = -1.
-            stand_still = 2.5
-            # limits
-            dof_vel_limits = -1
             dof_pos_limits = -10.
+            dof_vel_limits = -1
             dof_torque_limits = -0.1
 
     class normalization:
@@ -388,7 +373,7 @@ class X1DHStandCfgPPO(LeggedRobotCfgPPO):
         in_channels = X1DHStandCfg.env.frame_stack
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.001
+        entropy_coef = 0.005
         learning_rate = 1e-5
         num_learning_epochs = 2
         gamma = 0.994
