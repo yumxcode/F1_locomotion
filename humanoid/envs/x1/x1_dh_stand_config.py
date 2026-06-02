@@ -310,10 +310,11 @@ class X1DHStandCfg(LeggedRobotCfg):
 
         # final_swing_joint_pos = final_swing_joint_delta_pos + default_pos
         final_swing_joint_delta_pos = [0.25, 0.05, -0.11, 0.35, -0.16, 0.0, -0.25, -0.05, 0.11, 0.35, -0.16, 0.0]
-        target_feet_height = 0.03 
-        target_feet_height_max = 0.06
+        target_feet_height = 0.05 
+        target_feet_height_max = 0.08
+        landing_pitch_offset = 0.05  # ~3 deg, foot pitch up on landing preparation
         feet_to_ankle_distance = 0.041
-        cycle_time = 0.7
+        cycle_time = 0.9
         # if true negative total rewards are clipped at zero (avoids early termination problems)
         only_positive_rewards = True
         # tracking reward = exp(-error*sigma)
@@ -322,13 +323,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             ref_joint_pos = 2.2
-            feet_clearance = 1.
+            feet_clearance = 1.5
             feet_contact_number = 2.0
             # gait
             feet_air_time = 1.2
             foot_slip = -0.1
             feet_distance = 0.2
             knee_distance = 0.2
+            swing_foot_forward = 0.5  # 鼓励摆动相脚向前迈步
+            foot_landing_pitch = 0.3  # 落地 pitch 微上翘
             # contact 
             feet_contact_forces = -0.01
             # vel tracking

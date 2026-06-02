@@ -296,6 +296,18 @@ class X1DHStandEnv(LeggedRobot):
         self.ref_dof_pos[:, 11] = sin_pos_r * self.cfg.rewards.final_swing_joint_delta_pos[11]
 
         self.ref_dof_pos[torch.abs(sin_pos) < 0.1] = 0.
+
+        # ====== Landing pitch offset: 摆动相末段脚踝 pitch 微上翘，减少落地冲击 ======
+        landing_pitch_offset = self.cfg.rewards.landing_pitch_offset
+        # 左脚摆动相末段（sin_pos 从负往零走，范围 [-0.8, 0)）
+        landing_prep_l = (sin_pos < 0) & (sin_pos > -0.8)
+        # 右脚摆动相末段（sin_pos 从正往零走，范围 (0, 0.8]）
+        landing_prep_r = (sin_pos > 0) & (sin_pos < 0.8)
+        # 线性渐变：越接近零（即将着地）偏置越大
+        ramp_l = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0) * landing_prep_l.float()
+        ramp_r = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0) * landing_prep_r.float()
+        self.ref_dof_pos[:, 4] += landing_pitch_offset * ramp_l   # left ankle pitch
+        self.ref_dof_pos[:, 10] += landing_pitch_offset * ramp_r  # right ankle pitch
         
         # if use_ref_actions=True, action += ref_action
         self.ref_action = 2 * self.ref_dof_pos
@@ -759,7 +771,7 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_feet_clearance(self):
         """
         Calculates reward based on the clearance of the swing leg from the ground during movement.
-        Encourages appropriate lift of the feet during the swing phase of the gait.
+        Uses smooth Gaussian reward centered at target_feet_height for better gradient signal.
         """
         # Compute feet contact mask
         contact = self.contact_forces[:, self.feet_indices, 2] > 5.
@@ -773,11 +785,11 @@ class X1DHStandEnv(LeggedRobot):
         # Compute swing mask
         swing_mask = 1 - self._get_stance_mask()
 
-        # feet height should larger than target feet height at the peak
-        rew_pos = (self.feet_height > self.cfg.rewards.target_feet_height) * (self.feet_height < self.cfg.rewards.target_feet_height_max)
-        rew_pos = torch.sum(rew_pos * swing_mask, dim=1)
+        # Smooth Gaussian reward: higher when feet_height ≈ target
+        height_error = torch.abs(self.feet_height - self.cfg.rewards.target_feet_height)
+        rew = torch.exp(-height_error * 20) * swing_mask  # sigma=20 for smooth decay
         self.feet_height *= ~contact
-        return rew_pos
+        return torch.sum(rew, dim=1)
 
     def _reward_low_speed(self):
         """
@@ -898,3 +910,39 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_dof_torque_limits(self):
         # penalize torques too close to the limit
         return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit).clip(min=0.), dim=1)
+
+    def _reward_swing_foot_forward(self):
+        """
+        鼓励摆动相脚的 x 方向速度与前进命令方向一致。
+        当摆动脚向前移动且命令为正向时给正奖励，激励抬腿前进的人形步态。
+        """
+        swing_mask = 1 - self._get_stance_mask()  # 1=swing, 0=stance
+        # 脚在世界坐标系下的 x 线速度
+        foot_vel_x = self.rigid_state[:, self.feet_indices, 7]  # shape: [N, 2]
+        # 前进命令方向
+        cmd_dir = torch.sign(self.commands[:, 0]).unsqueeze(1)  # +1 forward, -1 backward
+        # 摆动脚速度方向与命令方向一致时奖励
+        rew = torch.clamp(foot_vel_x * cmd_dir, min=0)
+        rew *= swing_mask
+        # 仅在有移动命令时生效
+        has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).unsqueeze(1)
+        rew *= has_cmd
+        return torch.sum(rew, dim=1)
+
+    def _reward_foot_landing_pitch(self):
+        """
+        落地时脚 pitch 微上翘（脚尖微翘），减小着地冲击力。
+        检测刚落地的帧（当前接触但上一帧未接触），奖励脚 pitch 接近小的正角度。
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        # 刚落地的帧：当前接触但上一帧未接触
+        just_landed = contact & ~self.last_contacts
+
+        # 脚 pitch 角度
+        foot_pitch = self.feet_euler_xyz[:, :, 1]  # [N, 2]
+
+        # 期望落地时小正 pitch (脚尖微翘 ~0.03-0.08 rad, ~2-5 deg)
+        target_pitch = self.cfg.rewards.landing_pitch_offset
+        pitch_error = torch.abs(foot_pitch - target_pitch)
+        rew = torch.exp(-pitch_error * 30) * just_landed.float()
+        return torch.sum(rew, dim=1)
