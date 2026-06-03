@@ -323,22 +323,23 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # 精简 Reward 设计 (29→10): 稳定 + 省力 + 速度 + 安全
-            # v2: 修复 efficiency 惩罚主导 + stability 偏弱
+            # 精简 Reward 设计 v3 (10→11): 修复步态无前进动力 + vel hacking
             # ============================================================
-            # ① 速度跟踪 (Velocity Tracking) — 唯一任务目标
+            # ① 速度跟踪 — 加权平均，line_vel 权重最高，杜绝 hacking
             velocity_tracking = 3.0
-            # ② 步态引导 (Gait Guidance) — 参考轨迹 + 相位对齐
-            ref_joint_pos = 1.5
+            # ② 步态引导
+            ref_joint_pos = 2.0
             feet_contact_number = 2.0
             feet_clearance = 1.2
-            # ③ 稳定性 (Stability) — 提升 scale，存活优先
+            # ③ 稳定性
             stability = 4.0
-            # ④ 能效 (Efficiency) — exp 包裹后范围 0~-1，scale 降到 -0.5
-            efficiency = -0.5
-            # ⑤ 脚底打滑
+            # ④ 前进动力 — 摆动脚必须向前迈（核心缺失项）
+            swing_foot_forward = 1.0
+            # ⑤ 能效 — τ² (Rudin 2022 标准方案), scale 参考 main 分支 torques=-8e-9
+            efficiency = -8e-9
+            # ⑥ 脚底打滑
             foot_slip = -0.1
-            # ⑥ 安全硬约束
+            # ⑦ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.
             dof_vel_limits = -1

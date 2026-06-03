@@ -593,13 +593,12 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_velocity_tracking(self):
         """
-        ① 速度跟踪 — 唯一任务目标
-        合并: tracking_lin_vel, tracking_ang_vel, vel_mismatch_exp, low_speed, track_vel_hard, stand_still
-        线速度 + 角速度 + z轴弹跳抑制 + 零速静止，全部统一为一个信号。
+        ① 速度跟踪 — 加权平均，杜绝 hacking
+        v3: lin_vel 权重最高(0.5)，其余为辅助项，不再能靠 z/angxy 白嫖
         """
         stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
 
-        # --- 线速度跟踪 (xy) ---
+        # --- 线速度跟踪 (xy) — 主信号 ---
         lin_vel_error = torch.sum(torch.square(
             self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         r_lin = torch.exp(-lin_vel_error * 5)
@@ -609,19 +608,19 @@ class X1DHStandEnv(LeggedRobot):
             self.commands[:, 2] - self.base_ang_vel[:, 2])
         r_ang = torch.exp(-ang_vel_error * 5)
 
-        # --- z轴速度抑制（不上下弹跳）---
+        # --- z轴速度抑制 ---
         r_z = torch.exp(-torch.square(self.base_lin_vel[:, 2]) * 10)
 
-        # --- xy角速度抑制（不侧倾翻转）---
+        # --- xy角速度抑制 ---
         r_angxy = torch.exp(-torch.norm(self.base_ang_vel[:, :2], dim=1) * 5.)
 
         # --- 静止命令时保持不动 ---
         r_stand = torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1))
         r_stand = torch.where(stand_command, r_stand, torch.zeros_like(r_stand))
 
-        # 组合：行走时靠 tracking，静止时靠 stand_still
-        walk_reward = r_lin + r_ang + r_z + r_angxy
-        stand_reward = r_stand * 4.  # 静止时给足权重
+        # v3: 加权平均，lin_vel 权重 0.5，不再能靠 z/angxy 白嫖
+        walk_reward = 0.5 * r_lin + 0.2 * r_ang + 0.15 * r_z + 0.15 * r_angxy
+        stand_reward = r_stand
         r = torch.where(stand_command, stand_reward, walk_reward)
         return r
 
@@ -662,21 +661,12 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_efficiency(self):
         """
-        ③ 能效 — 机械功率归一化
-        v2: 使用 exp(-power) 包裹，输出范围 (0, 1)
-        机械功率越小 → reward 越接近 1 → 配合负 scale 产生温和惩罚
+        ③ 能效 — τ² 惩罚 (IsaacGym / Rudin 2022 标准方案)
+        业界最成熟的方案：直接用 sum(τ²)，配合小 scale 温和约束。
+        不需要 CoT 归一化或 exp 包裹。
+        有效惩罚 ≈ -2e-5 × 3000 = -0.06，温和不主导。
         """
-        # 机械功率 = |τ · q̇|
-        mechanical_power = torch.sum(torch.abs(self.torques * self.dof_vel), dim=1)
-
-        # 归一化：静止时不除以速度，行走时除以速度得到 Cost of Transport
-        speed = torch.norm(self.base_lin_vel[:, :2], dim=1).clamp(min=0.3)
-        stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
-        cot = torch.where(stand_command, mechanical_power, mechanical_power / speed)
-
-        # exp 包裹：输出 (0, 1)，功率越低越接近 1
-        # 配合 scale=-0.5 → 有效惩罚范围 (0, -0.5)
-        return torch.exp(-cot * 0.1)
+        return torch.sum(torch.square(self.torques), dim=1)
 
     def _reward_ref_joint_pos(self):
         """
@@ -714,6 +704,24 @@ class X1DHStandEnv(LeggedRobot):
         height_error = torch.abs(self.feet_height - self.cfg.rewards.target_feet_height)
         rew = torch.exp(-height_error * 20) * swing_mask
         self.feet_height *= ~contact
+        return torch.sum(rew, dim=1)
+
+    def _reward_swing_foot_forward(self):
+        """
+        ⑥-a 前进动力 — 鼓励摆动脚向前迈
+        核心缺失项：没有这个信号，机器人不知道"脚要往前走"
+        """
+        swing_mask = 1 - self._get_stance_mask()  # 1=swing, 0=stance
+        # 脚在世界坐标系下的 x 线速度
+        foot_vel_x = self.rigid_state[:, self.feet_indices, 7]  # shape: [N, 2]
+        # 前进命令方向
+        cmd_dir = torch.sign(self.commands[:, 0]).unsqueeze(1)
+        # 摆动脚速度方向与命令方向一致时奖励
+        rew = torch.clamp(foot_vel_x * cmd_dir, min=0)
+        rew *= swing_mask
+        # 仅在有移动命令时生效
+        has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).unsqueeze(1)
+        rew *= has_cmd
         return torch.sum(rew, dim=1)
 
     def _reward_foot_slip(self):
