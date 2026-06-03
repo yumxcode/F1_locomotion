@@ -45,42 +45,42 @@ from isaacgym.torch_utils import *
 import torch
 from datetime import datetime
 
-import pygame
-from threading import Thread
+try:
+    import pygame
+    from threading import Thread
+    _HAS_PYGAME = True
+except ImportError:
+    _HAS_PYGAME = False
 
 
 x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, 0.0
 joystick_use = True
 joystick_opened = False
 
-if joystick_use:
-    pygame.init()
+if joystick_use and _HAS_PYGAME:
     try:
-        # get joystick
+        pygame.init()
         joystick = pygame.joystick.Joystick(0)
         joystick.init()
         joystick_opened = True
-    except Exception as e:
-        print(f"无法打开手柄：{e}")
-    # joystick thread exit flag
-    exit_flag = False
 
-    def handle_joystick_input():
-        global exit_flag, x_vel_cmd, y_vel_cmd, yaw_vel_cmd, head_vel_cmd
-        
-        
-        while not exit_flag:
-            # get joystick input
-            pygame.event.get()
-            # update robot command
-            x_vel_cmd = -joystick.get_axis(1) * 1
-            y_vel_cmd = -joystick.get_axis(0) * 1
-            yaw_vel_cmd = -joystick.get_axis(3) * 1
-            pygame.time.delay(100)
+        exit_flag = False
 
-    if joystick_opened and joystick_use:
+        def handle_joystick_input():
+            global exit_flag, x_vel_cmd, y_vel_cmd, yaw_vel_cmd
+
+            while not exit_flag:
+                pygame.event.get()
+                x_vel_cmd = -joystick.get_axis(1) * 1
+                y_vel_cmd = -joystick.get_axis(0) * 1
+                yaw_vel_cmd = -joystick.get_axis(3) * 1
+                pygame.time.delay(100)
+
         joystick_thread = Thread(target=handle_joystick_input)
         joystick_thread.start()
+    except Exception as e:
+        print(f"[play] 手柄不可用，将使用定速命令: {e}")
+        joystick_use = False
 
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
@@ -244,7 +244,7 @@ def play(args):
 
 if __name__ == '__main__':
     EXPORT_POLICY = False
-    RENDER = False
-    FIX_COMMAND = False
+    RENDER = True
+    FIX_COMMAND = True   # 无手柄时使用定速命令 (0.5 m/s forward)
     args = get_args()
     play(args)
