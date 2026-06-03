@@ -662,20 +662,21 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_efficiency(self):
         """
-        ③ 能效 — 机械功率 / 速度 = Cost of Transport
-        合并: torques, dof_vel, dof_acc, action_smoothness, feet_contact_forces
-        物理原理：|τ·q̇| 是实际机械功率，比 τ² 更准确反映能耗。
-        省力 → 自然会动作平滑、减少冲击、不过度抬脚。
+        ③ 能效 — 机械功率归一化
+        v2: 使用 exp(-power) 包裹，输出范围 (0, 1)
+        机械功率越小 → reward 越接近 1 → 配合负 scale 产生温和惩罚
         """
         # 机械功率 = |τ · q̇|
         mechanical_power = torch.sum(torch.abs(self.torques * self.dof_vel), dim=1)
 
-        # 归一化：除以速度得到 Cost of Transport，静止时不除（避免除零）
+        # 归一化：静止时不除以速度，行走时除以速度得到 Cost of Transport
         speed = torch.norm(self.base_lin_vel[:, :2], dim=1).clamp(min=0.3)
         stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
         cot = torch.where(stand_command, mechanical_power, mechanical_power / speed)
 
-        return cot
+        # exp 包裹：输出 (0, 1)，功率越低越接近 1
+        # 配合 scale=-0.5 → 有效惩罚范围 (0, -0.5)
+        return torch.exp(-cot * 0.1)
 
     def _reward_ref_joint_pos(self):
         """

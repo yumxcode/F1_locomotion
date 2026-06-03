@@ -324,6 +324,7 @@ class X1DHStandCfg(LeggedRobotCfg):
         class scales:
             # ============================================================
             # 精简 Reward 设计 (29→10): 稳定 + 省力 + 速度 + 安全
+            # v2: 修复 efficiency 惩罚主导 + stability 偏弱
             # ============================================================
             # ① 速度跟踪 (Velocity Tracking) — 唯一任务目标
             velocity_tracking = 3.0
@@ -331,10 +332,10 @@ class X1DHStandCfg(LeggedRobotCfg):
             ref_joint_pos = 1.5
             feet_contact_number = 2.0
             feet_clearance = 1.2
-            # ③ 稳定性 (Stability) — 合并 orientation/base_height/base_acc/default_joint_pos/feet_rotation
-            stability = 2.0
-            # ④ 能效 (Efficiency) — 机械功率替代 torques²/dof_vel/dof_acc/smoothness/contact_forces
-            efficiency = -0.02
+            # ③ 稳定性 (Stability) — 提升 scale，存活优先
+            stability = 4.0
+            # ④ 能效 (Efficiency) — exp 包裹后范围 0~-1，scale 降到 -0.5
+            efficiency = -0.5
             # ⑤ 脚底打滑
             foot_slip = -0.1
             # ⑥ 安全硬约束
