@@ -827,7 +827,9 @@ class LeggedRobot(BaseTask):
             env_ids (List[int]): ids of environments being reset
         """
         # If the tracking reward is above 80% of the maximum, increase the range of commands
-        if torch.mean(self.episode_sums["tracking_lin_vel"][env_ids]) / self.max_episode_length > 0.8 * self.reward_scales["tracking_lin_vel"]:
+        # Support both legacy (tracking_lin_vel) and simplified (velocity_tracking) reward names
+        _vel_key = "velocity_tracking" if "velocity_tracking" in self.reward_scales else "tracking_lin_vel"
+        if torch.mean(self.episode_sums[_vel_key][env_ids]) / self.max_episode_length > 0.8 * self.reward_scales[_vel_key]:
             self.command_ranges["lin_vel_x"][0] = np.clip(self.command_ranges["lin_vel_x"][0] - 0.25, -self.cfg.commands.max_curriculum/2, 0.)
             self.command_ranges["lin_vel_x"][1] = np.clip(self.command_ranges["lin_vel_x"][1] + 0.5, 0., self.cfg.commands.max_curriculum)
 
