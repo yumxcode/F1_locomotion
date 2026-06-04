@@ -315,6 +315,8 @@ class X1DHStandCfg(LeggedRobotCfg):
         landing_pitch_offset = 0.05  # ~3 deg, foot pitch up on landing preparation
         feet_to_ankle_distance = 0.041
         cycle_time = 0.9
+        # v5: walk phase 衰减因子 — stability/ref/contact 在 walk 时 × walk_decay
+        walk_decay = 0.3
         # if true negative total rewards are clipped at zero (avoids early termination problems)
         only_positive_rewards = True
         # tracking reward = exp(-error/sigma)
@@ -325,27 +327,27 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward v4: 修复 v3 三层根因
-            #   P0: curriculum 跑飞 → 指数渐进调度
-            #   P1: 梯度压缩 → velocity 拆为独立项 lin_vel + ang_vel
-            #   P2: free money → 降低 stability/ref_joint_pos scale
-            #   P3: exp 饱和 → 降低系数 k=5→2 扩大梯度区域
+            # Reward v5: Stand/Walk 阶段切换
+            #   核心修复：walk phase 衰减"静态拉力"，释放"动态推力"
+            #   walk_decay = 0.3: stability/ref/contact 在 walk 时 ×0.3
+            #   foot_slip 5× 惩罚阻止滑行
+            #   swing_forward 2× 鼓励迈步
             # ============================================================
-            # ① 速度跟踪 — 拆分为独立项，恢复独立梯度方向
+            # ① 速度跟踪
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 步态引导
+            # ② 步态引导 — walk phase 衰减
             ref_joint_pos = 1.0
             feet_contact_number = 2.0
-            feet_clearance = 1.2
-            # ③ 稳定性 — 降低 scale，减少 free money
+            feet_clearance = 1.5
+            # ③ 稳定性 — walk phase 衰减
             stability = 1.5
-            # ④ 前进动力
-            swing_foot_forward = 1.0
-            # ⑤ 能效 — τ² (Rudin 2022)
+            # ④ 前进动力 — 加强
+            swing_foot_forward = 2.0
+            # ⑤ 能效
             efficiency = -8e-9
-            # ⑥ 脚底打滑
-            foot_slip = -0.1
+            # ⑥ 脚底打滑 — 5× 惩罚阻止滑行
+            foot_slip = -0.5
             # ⑦ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.

@@ -622,7 +622,7 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_stability(self):
         """
         ② 稳定性 — 不摔倒 + 质心稳定
-        合并: orientation, base_height, base_acc, default_joint_pos, feet_rotation
+        v5: walk phase 衰减 (× walk_decay)，避免静态拉力压制迈步
         """
         # --- 躯干姿态（pitch/roll → 0）---
         quat_mismatch = torch.exp(-torch.sum(torch.abs(self.base_euler_xyz[:, :2]), dim=1) * 10)
@@ -652,7 +652,12 @@ class X1DHStandEnv(LeggedRobot):
         feet_rot = torch.sum(torch.square(self.feet_euler_xyz[:, :, :2]), dim=[1, 2])
         r_feet = torch.exp(-feet_rot * 15)
 
-        return (r_orient + r_height + r_acc + r_joint + r_feet) / 5.
+        r = (r_orient + r_height + r_acc + r_joint + r_feet) / 5.
+
+        # v5: walk phase 衰减
+        stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
+        walk_scale = torch.where(stand_command, 1.0, self.cfg.rewards.walk_decay)
+        return r * walk_scale
 
     def _reward_efficiency(self):
         """
@@ -666,6 +671,7 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_ref_joint_pos(self):
         """
         ④ 步态轨迹引导 — 关节跟踪参考轨迹
+        v5: walk phase 衰减 (× walk_decay)
         """
         joint_pos = self.dof_pos.clone()
         pos_target = self.ref_dof_pos.clone()
@@ -674,17 +680,24 @@ class X1DHStandEnv(LeggedRobot):
         diff = joint_pos - pos_target
         r = torch.exp(-2 * torch.norm(diff, dim=1)) - 0.2 * torch.norm(diff, dim=1).clamp(0, 0.5)
         r[stand_command] = 1.0
-        return r
+        # v5: walk phase 衰减
+        walk_scale = torch.where(stand_command, 1.0, self.cfg.rewards.walk_decay)
+        return r * walk_scale
 
     def _reward_feet_contact_number(self):
         """
         ⑤ 步态相位-接触对齐
+        v5: walk phase 衰减 (× walk_decay)
         """
         contact = self.contact_forces[:, self.feet_indices, 2] > 5.
         stance_mask = self._get_stance_mask().clone()
-        stance_mask[torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold] = 1
+        stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
+        stance_mask[stand_command] = 1
         reward = torch.where(contact == stance_mask, 1, -0.3)
-        return torch.mean(reward, dim=1)
+        r = torch.mean(reward, dim=1)
+        # v5: walk phase 衰减
+        walk_scale = torch.where(stand_command, 1.0, self.cfg.rewards.walk_decay)
+        return r * walk_scale
 
     def _reward_feet_clearance(self):
         """
