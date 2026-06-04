@@ -756,18 +756,30 @@ class X1DHStandEnv(LeggedRobot):
     def update_command_curriculum(self, env_ids):
         """
         v4: 渐进式 command curriculum
-        修复 v3 的 curriculum 跑飞问题：
-        - 基类条件 raw > 0.8 在站立时就满足 → 2 个 episode 内 cmd 范围到顶
-        - v4: 使用指数渐进调度，基于全局 step counter
-        - 线速度上限按 min(max_curriculum, schedule(t)) 渐进扩展
+        目标速度上限 0.8 m/s，分三阶段渐进：
+          Phase 1 (0~2000 ep):  0.3 → 0.5 m/s  学会低速稳定行走
+          Phase 2 (2000~5000 ep): 0.5 → 0.8 m/s  逐步提速
+          Phase 3 (5000+ ep):   固定 0.8 m/s
+        基于 common_step_counter 计算全局 episode 数
         """
-        # 线速度范围渐进：从 0.4 开始，每 1000 个 episode 扩展 0.1，到 max_curriculum 停止
         num_episodes = self.common_step_counter.item() // self.max_episode_length
-        progress = min(1.0, num_episodes / 5000.0)  # 5000 episodes → full range
-        current_max = 0.4 + progress * (self.cfg.commands.max_curriculum - 0.4)
+        max_cmd = self.cfg.commands.max_curriculum  # 0.8
+        start_cmd = 0.3
 
-        self.command_ranges["lin_vel_x"][1] = min(current_max, self.cfg.commands.max_curriculum)
-        self.command_ranges["lin_vel_x"][0] = max(-current_max / 2, -self.cfg.commands.max_curriculum / 2)
+        if num_episodes < 2000:
+            # Phase 1: 0.3 → 0.5
+            progress = num_episodes / 2000.0
+            current_max = start_cmd + progress * (0.5 - start_cmd)
+        elif num_episodes < 5000:
+            # Phase 2: 0.5 → max_cmd
+            progress = (num_episodes - 2000) / 3000.0
+            current_max = 0.5 + progress * (max_cmd - 0.5)
+        else:
+            # Phase 3: full range
+            current_max = max_cmd
+
+        self.command_ranges["lin_vel_x"][1] = current_max
+        self.command_ranges["lin_vel_x"][0] = -current_max / 2
 
     # ============================================================
     # 以下为保留的辅助 reward（不在 scales 中，仅供 termination 等内部使用）
