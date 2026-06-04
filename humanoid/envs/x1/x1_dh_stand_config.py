@@ -317,25 +317,32 @@ class X1DHStandCfg(LeggedRobotCfg):
         cycle_time = 0.9
         # if true negative total rewards are clipped at zero (avoids early termination problems)
         only_positive_rewards = True
-        # tracking reward = exp(-error*sigma)
-        tracking_sigma = 5 
+        # tracking reward = exp(-error/sigma)
+        # v4: sigma=0.5 → 等效 exp(-err/0.5)=exp(-err×2)，比 v3 的 exp(-err×5) 梯度区域更宽
+        # exp(-0.5×2)=0.37 仍有信号 (v3: exp(-0.5×5)=0.08 近乎死区)
+        tracking_sigma = 0.5
         max_contact_force = 700  # forces above this value are penalized (safety reference)
         
         class scales:
             # ============================================================
-            # 精简 Reward 设计 v3 (10→11): 修复步态无前进动力 + vel hacking
+            # Reward v4: 修复 v3 三层根因
+            #   P0: curriculum 跑飞 → 指数渐进调度
+            #   P1: 梯度压缩 → velocity 拆为独立项 lin_vel + ang_vel
+            #   P2: free money → 降低 stability/ref_joint_pos scale
+            #   P3: exp 饱和 → 降低系数 k=5→2 扩大梯度区域
             # ============================================================
-            # ① 速度跟踪 — 加权平均，line_vel 权重最高，杜绝 hacking
-            velocity_tracking = 3.0
+            # ① 速度跟踪 — 拆分为独立项，恢复独立梯度方向
+            tracking_lin_vel = 1.8
+            tracking_ang_vel = 0.8
             # ② 步态引导
-            ref_joint_pos = 2.0
+            ref_joint_pos = 1.0
             feet_contact_number = 2.0
             feet_clearance = 1.2
-            # ③ 稳定性
-            stability = 4.0
-            # ④ 前进动力 — 摆动脚必须向前迈（核心缺失项）
+            # ③ 稳定性 — 降低 scale，减少 free money
+            stability = 1.5
+            # ④ 前进动力
             swing_foot_forward = 1.0
-            # ⑤ 能效 — τ² (Rudin 2022 标准方案), scale 参考 main 分支 torques=-8e-9
+            # ⑤ 能效 — τ² (Rudin 2022)
             efficiency = -8e-9
             # ⑥ 脚底打滑
             foot_slip = -0.1

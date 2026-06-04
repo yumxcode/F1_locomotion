@@ -591,37 +591,32 @@ class X1DHStandEnv(LeggedRobot):
     # ⑨ safety_limits     — 合并 dof_pos/vel/torque_limits
     # ============================================================
 
-    def _reward_velocity_tracking(self):
+    def _reward_tracking_lin_vel(self):
         """
-        ① 速度跟踪 — 加权平均，杜绝 hacking
-        v3: lin_vel 权重最高(0.5)，其余为辅助项，不再能靠 z/angxy 白嫖
+        ①-a 线速度跟踪 — 独立 reward，保持独立梯度
+        v4: 从 weighted average 拆出，exp 系数降低 k=5→2 扩大梯度区域
         """
         stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
-
-        # --- 线速度跟踪 (xy) — 主信号 ---
         lin_vel_error = torch.sum(torch.square(
             self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        r_lin = torch.exp(-lin_vel_error * 5)
+        r = torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
+        r = torch.where(stand_command,
+                        torch.exp(-torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1) / self.cfg.rewards.tracking_sigma),
+                        r)
+        return r
 
-        # --- 角速度跟踪 (yaw) ---
+    def _reward_tracking_ang_vel(self):
+        """
+        ①-b 角速度跟踪 — 独立 reward
+        v4: 从 weighted average 拆出，独立梯度方向
+        """
+        stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
         ang_vel_error = torch.square(
             self.commands[:, 2] - self.base_ang_vel[:, 2])
-        r_ang = torch.exp(-ang_vel_error * 5)
-
-        # --- z轴速度抑制 ---
-        r_z = torch.exp(-torch.square(self.base_lin_vel[:, 2]) * 10)
-
-        # --- xy角速度抑制 ---
-        r_angxy = torch.exp(-torch.norm(self.base_ang_vel[:, :2], dim=1) * 5.)
-
-        # --- 静止命令时保持不动 ---
-        r_stand = torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1))
-        r_stand = torch.where(stand_command, r_stand, torch.zeros_like(r_stand))
-
-        # v3: 加权平均，lin_vel 权重 0.5，不再能靠 z/angxy 白嫖
-        walk_reward = 0.5 * r_lin + 0.2 * r_ang + 0.15 * r_z + 0.15 * r_angxy
-        stand_reward = r_stand
-        r = torch.where(stand_command, stand_reward, walk_reward)
+        r = torch.exp(-ang_vel_error / self.cfg.rewards.tracking_sigma)
+        r = torch.where(stand_command,
+                        torch.exp(-torch.square(self.base_ang_vel[:, 2]) / self.cfg.rewards.tracking_sigma),
+                        r)
         return r
 
     def _reward_stability(self):
@@ -757,6 +752,22 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_termination(self):
         # Terminal reward / penalty
         return self.reset_buf * ~self.time_out_buf
+
+    def update_command_curriculum(self, env_ids):
+        """
+        v4: 渐进式 command curriculum
+        修复 v3 的 curriculum 跑飞问题：
+        - 基类条件 raw > 0.8 在站立时就满足 → 2 个 episode 内 cmd 范围到顶
+        - v4: 使用指数渐进调度，基于全局 step counter
+        - 线速度上限按 min(max_curriculum, schedule(t)) 渐进扩展
+        """
+        # 线速度范围渐进：从 0.4 开始，每 1000 个 episode 扩展 0.1，到 max_curriculum 停止
+        num_episodes = self.common_step_counter.item() // self.max_episode_length
+        progress = min(1.0, num_episodes / 5000.0)  # 5000 episodes → full range
+        current_max = 0.4 + progress * (self.cfg.commands.max_curriculum - 0.4)
+
+        self.command_ranges["lin_vel_x"][1] = min(current_max, self.cfg.commands.max_curriculum)
+        self.command_ranges["lin_vel_x"][0] = max(-current_max / 2, -self.cfg.commands.max_curriculum / 2)
 
     # ============================================================
     # 以下为保留的辅助 reward（不在 scales 中，仅供 termination 等内部使用）
