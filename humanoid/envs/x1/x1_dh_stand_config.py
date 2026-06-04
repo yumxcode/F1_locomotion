@@ -278,7 +278,7 @@ class X1DHStandCfg(LeggedRobotCfg):
         
     class commands(LeggedRobotCfg.commands):
         curriculum = True
-        max_curriculum = 0.8
+        max_curriculum = 0.6
         # Vers: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         num_commands = 4
         resampling_time = 25.  # time before command are changed[s]
@@ -332,7 +332,7 @@ class X1DHStandCfg(LeggedRobotCfg):
             #   P3: exp 饱和 → 降低系数 k=5→2 扩大梯度区域
             # ============================================================
             # ① 速度跟踪 — 拆分为独立项，恢复独立梯度方向
-            tracking_lin_vel = 1.8
+            tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
             # ② 步态引导
             ref_joint_pos = 1.0

@@ -755,26 +755,23 @@ class X1DHStandEnv(LeggedRobot):
 
     def update_command_curriculum(self, env_ids):
         """
-        v4: 基于 common_step_counter 的渐进式 curriculum
-        目标速度上限 0.8 m/s，分三阶段：
-          Phase 1: steps 0→10000     (iter 0→417)    cmd 0.3→0.5 学会低速
-          Phase 2: steps 10000→30000 (iter 417→1250)  cmd 0.5→0.8 逐步提速
-          Phase 3: steps 30000+      (iter 1250+)     cmd 0.8 固定
+        v4.2: 基于 common_step_counter 的渐进式 curriculum
+        目标速度上限 0.6 m/s（稳定行走目标 0.5 m/s，留余量）
+          Phase 1: steps 0→20000     (iter 0→833)    cmd 0.3→0.4 低速适应
+          Phase 2: steps 20000→60000 (iter 833→2500)  cmd 0.4→0.6 逐步提速
+          Phase 3: steps 60000+      (iter 2500+)     cmd 0.6 固定
         """
         steps = self.common_step_counter
-        max_cmd = self.cfg.commands.max_curriculum  # 0.8
+        max_cmd = self.cfg.commands.max_curriculum  # 0.6
         start_cmd = 0.3
 
-        if steps < 10000:
-            # Phase 1: 0.3 → 0.5
-            progress = steps / 10000.0
-            current_max = start_cmd + progress * (0.5 - start_cmd)
-        elif steps < 30000:
-            # Phase 2: 0.5 → 0.8
-            progress = (steps - 10000) / 20000.0
-            current_max = 0.5 + progress * (max_cmd - 0.5)
+        if steps < 20000:
+            progress = steps / 20000.0
+            current_max = start_cmd + progress * (0.4 - start_cmd)
+        elif steps < 60000:
+            progress = (steps - 20000) / 40000.0
+            current_max = 0.4 + progress * (max_cmd - 0.4)
         else:
-            # Phase 3: full range
             current_max = max_cmd
 
         self.command_ranges["lin_vel_x"][1] = current_max
