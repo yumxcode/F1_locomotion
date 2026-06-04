@@ -761,7 +761,7 @@ class X1DHStandEnv(LeggedRobot):
           Phase 2: steps 10000→30000 (iter 417→1250)  cmd 0.5→0.8 逐步提速
           Phase 3: steps 30000+      (iter 1250+)     cmd 0.8 固定
         """
-        steps = self.common_step_counter.item()
+        steps = self.common_step_counter
         max_cmd = self.cfg.commands.max_curriculum  # 0.8
         start_cmd = 0.3
 
