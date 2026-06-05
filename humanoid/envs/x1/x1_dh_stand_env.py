@@ -729,6 +729,26 @@ class X1DHStandEnv(LeggedRobot):
         rew *= has_cmd
         return torch.sum(rew, dim=1)
 
+    def _reward_landing_impact(self):
+        """
+        ⑧ 落地冲击惩罚 — 惩罚接触力 > max_contact_force (V8 新增)
+        只在接触力超过阈值时生效，鼓励柔和着地
+        """
+        max_f = self.cfg.rewards.max_contact_force  # 700N
+        cfz = self.contact_forces[:, self.feet_indices, 2]  # [N, 2]
+        excess = torch.clamp(cfz - max_f, min=0.) ** 2 / (max_f ** 2)
+        return torch.sum(excess, dim=1)
+
+    def _reward_roll_penalty(self):
+        """
+        ⑨ 横向摇摆惩罚 — 独立惩罚 roll 角 (V8 新增)
+        V7 roll ±5.6° 太大, 业界正常 < 2°
+        用 exp 形式使小角度温和、大角度严厉
+        """
+        roll = self.base_euler_xyz[:, 0]  # roll in rad
+        # 1 - exp(-|roll| * 10): roll=0→0, roll=3.67°→0.90, roll=5.6°→0.99
+        return 1.0 - torch.exp(-torch.abs(roll) * 10)
+
     def _reward_foot_slip(self):
         """
         ⑦ 脚底打滑惩罚

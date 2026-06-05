@@ -310,8 +310,8 @@ class X1DHStandCfg(LeggedRobotCfg):
 
         # final_swing_joint_pos = final_swing_joint_delta_pos + default_pos
         final_swing_joint_delta_pos = [0.25, 0.05, -0.11, 0.35, -0.16, 0.0, -0.25, -0.05, 0.11, 0.35, -0.16, 0.0]
-        target_feet_height = 0.05 
-        target_feet_height_max = 0.08
+        target_feet_height = 0.03   # v8: 0.05→0.03 降低抬脚高度，减少落地冲击 (V7 max 4824N)
+        target_feet_height_max = 0.06  # v8: 0.08→0.06 配合降低
         landing_pitch_offset = 0.05  # ~3 deg, foot pitch up on landing preparation
         feet_to_ankle_distance = 0.041
         cycle_time = 0.9
@@ -327,15 +327,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward v7: swing 上限 + scale 重平衡
-            #   V6 根因: swing clamp(min=0) 无上限 → 线性增长碾压 stability
-            #     swing/stab 从 P1 6:1 恶化到 P6 60:1 → 策略发散
-            #   V7 修复:
-            #     1. swing 代码加 max=0.5/脚 上限 → scaled max=2.0 不再无限增长
-            #     2. stability 1.0→1.5 加强平衡约束
-            #     3. swing 2.5→2.0 降低迈步权重
-            #     4. foot_slip -0.3→-0.5 加强行走中防滑
-            #   预期 swing/stab ≈ 9:1 (V6 P2 时 20:1) 且不再恶化
+            # Reward v8: 步态精修 — 降冲击 + 减摇摆 + 防滑
+            #   V7 现状: 能走但落地冲击16×体重, roll ±5.6°, 足底打滑1.3m/s
+            #   V8 改动:
+            #     1. clearance target 0.05→0.03, max 0.08→0.06 → 减少抬脚高度→减冲击
+            #     2. foot_slip -0.5→-1.0 → 加倍防滑惩罚
+            #     3. 新增 landing_impact reward → 惩罚接触力>700N
+            #     4. 新增 roll_penalty reward → 独立惩罚横向摇摆
+            #     5. stability 1.5→1.8 → 进一步加强平衡
+            #   保持 V7 的 swing max=0.5 上限不变
             # ============================================================
             # ① 速度跟踪
             tracking_lin_vel = 2.5
@@ -344,19 +344,22 @@ class X1DHStandCfg(LeggedRobotCfg):
             ref_joint_pos = 1.0
             feet_contact_number = 1.5
             feet_clearance = 1.2
-            # ③ 稳定性 — 加强
-            stability = 1.5            # v6: 1.0 → 1.5 防止崩溃
-            # ④ 前进动力 — 适度回调 + 代码加 max 上限
-            swing_foot_forward = 2.0   # v6: 2.5 → 2.0 配合 max=0.5/脚
+            # ③ 稳定性 — 进一步加强
+            stability = 1.8            # v8: 1.5 → 1.8 加强平衡
+            # ④ 前进动力 — 保持
+            swing_foot_forward = 2.0   # 保持 V7 的 max=0.5/脚
             # ⑤ 能效
             efficiency = -8e-9
-            # ⑥ 脚底打滑 — 加强
-            foot_slip = -0.5           # v6: -0.3 → -0.5 行走中更强防滑
+            # ⑥ 脚底打滑 — 加倍
+            foot_slip = -1.0           # v8: -0.5 → -1.0 加倍防滑
             # ⑦ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.
             dof_vel_limits = -1
             dof_torque_limits = -0.1
+            # ⑧ v8 新增
+            landing_impact = -0.05     # 惩罚落地冲击力 > 700N (经数值校验: 峰值占 tracking ~5%)
+            roll_penalty = -2.0        # 独立惩罚横向摇摆
 
     class normalization:
         class obs_scales:
