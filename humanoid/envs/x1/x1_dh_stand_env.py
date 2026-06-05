@@ -297,15 +297,21 @@ class X1DHStandEnv(LeggedRobot):
 
         self.ref_dof_pos[torch.abs(sin_pos) < 0.1] = 0.
 
-        # ====== Landing pitch offset: 摆动相末段脚踝 pitch 微上翘，减少落地冲击 ======
+        # ====== Heel-strike: 摆动相末段踝背屈，脚跟先着地再滚动到全脚掌 (V8) ======
+        # V7: 线性 ramp + offset=0.05 → 落地时 ankle=-20° 跖屈 (平拍地面, 冲击 16× 体重)
+        # V8: 三次 ramp + offset=0.25 → 落地时 ankle≈0° (脚跟先着地, 滚动吸震)
         landing_pitch_offset = self.cfg.rewards.landing_pitch_offset
-        # 左脚摆动相末段（sin_pos 从负往零走，范围 [-0.8, 0)）
+        # 左脚摆动相末段（sin_pos 从负往零走）
         landing_prep_l = (sin_pos < 0) & (sin_pos > -0.8)
-        # 右脚摆动相末段（sin_pos 从正往零走，范围 (0, 0.8]）
+        # 右脚摆动相末段（sin_pos 从正往零走）
         landing_prep_r = (sin_pos > 0) & (sin_pos < 0.8)
-        # 线性渐变：越接近零（即将着地）偏置越大
-        ramp_l = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0) * landing_prep_l.float()
-        ramp_r = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0) * landing_prep_r.float()
+        # 三次方渐变：在落地前最后 20% (sin_pos > 0.6) 急剧增加背屈
+        # 这样大部分 swing 期间背屈不大，只在接近落地时快速翘起脚尖
+        t_l = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0, max=1)
+        t_r = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0, max=1)
+        # 三次 smoothstep: 3t² - 2t³, 在 t=0→0, t=1→1, 中间加速
+        ramp_l = (3 * t_l ** 2 - 2 * t_l ** 3) * landing_prep_l.float()
+        ramp_r = (3 * t_r ** 2 - 2 * t_r ** 3) * landing_prep_r.float()
         self.ref_dof_pos[:, 4] += landing_pitch_offset * ramp_l   # left ankle pitch
         self.ref_dof_pos[:, 10] += landing_pitch_offset * ramp_r  # right ankle pitch
         
@@ -738,16 +744,6 @@ class X1DHStandEnv(LeggedRobot):
         cfz = self.contact_forces[:, self.feet_indices, 2]  # [N, 2]
         excess = torch.clamp(cfz - max_f, min=0.) ** 2 / (max_f ** 2)
         return torch.sum(excess, dim=1)
-
-    def _reward_roll_penalty(self):
-        """
-        ⑨ 横向摇摆惩罚 — 独立惩罚 roll 角 (V8 新增)
-        V7 roll ±5.6° 太大, 业界正常 < 2°
-        用 exp 形式使小角度温和、大角度严厉
-        """
-        roll = self.base_euler_xyz[:, 0]  # roll in rad
-        # 1 - exp(-|roll| * 10): roll=0→0, roll=3.67°→0.90, roll=5.6°→0.99
-        return 1.0 - torch.exp(-torch.abs(roll) * 10)
 
     def _reward_foot_slip(self):
         """
