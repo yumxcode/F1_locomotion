@@ -1,0 +1,8 @@
+{
+  "repoUrl": "https://github.com/yumxcode/F1_locomotion.git",
+  "branch": "reward-simplify-29to10",
+  "commitHash": "1710254",
+  "designId": "standalone",
+  "entryPoint": "F1_locomotion/humanoid/scripts/train.py",
+  "startScript": "gm-run F1_locomotion/humanoid/scripts/train.py --task=x1_dh_stand --headless --max_iterations=15000"
+}

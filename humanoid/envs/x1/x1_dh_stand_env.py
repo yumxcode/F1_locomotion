@@ -622,7 +622,7 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_stability(self):
         """
         ② 稳定性 — 不摔倒 + 质心稳定
-        v5: walk phase 衰减 (× walk_decay)，避免静态拉力压制迈步
+        v6: 移除 walk_decay，全程不衰减（v5 的衰减导致 stability 崩溃）
         """
         # --- 躯干姿态（pitch/roll → 0）---
         quat_mismatch = torch.exp(-torch.sum(torch.abs(self.base_euler_xyz[:, :2]), dim=1) * 10)
@@ -654,10 +654,8 @@ class X1DHStandEnv(LeggedRobot):
 
         r = (r_orient + r_height + r_acc + r_joint + r_feet) / 5.
 
-        # v5: walk phase 衰减
-        stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
-        walk_scale = torch.where(stand_command, 1.0, self.cfg.rewards.walk_decay)
-        return r * walk_scale
+        # v6: 不衰减，全程生效
+        return r
 
     def _reward_efficiency(self):
         """
@@ -671,7 +669,7 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_ref_joint_pos(self):
         """
         ④ 步态轨迹引导 — 关节跟踪参考轨迹
-        v5: walk phase 衰减 (× walk_decay)
+        v6: 移除 walk_decay，全程不衰减
         """
         joint_pos = self.dof_pos.clone()
         pos_target = self.ref_dof_pos.clone()
@@ -680,14 +678,13 @@ class X1DHStandEnv(LeggedRobot):
         diff = joint_pos - pos_target
         r = torch.exp(-2 * torch.norm(diff, dim=1)) - 0.2 * torch.norm(diff, dim=1).clamp(0, 0.5)
         r[stand_command] = 1.0
-        # v5: walk phase 衰减
-        walk_scale = torch.where(stand_command, 1.0, self.cfg.rewards.walk_decay)
-        return r * walk_scale
+        # v6: 不衰减，全程生效
+        return r
 
     def _reward_feet_contact_number(self):
         """
         ⑤ 步态相位-接触对齐
-        v5: walk phase 衰减 (× walk_decay)
+        v6: 移除 walk_decay，全程不衰减
         """
         contact = self.contact_forces[:, self.feet_indices, 2] > 5.
         stance_mask = self._get_stance_mask().clone()
@@ -695,9 +692,8 @@ class X1DHStandEnv(LeggedRobot):
         stance_mask[stand_command] = 1
         reward = torch.where(contact == stance_mask, 1, -0.3)
         r = torch.mean(reward, dim=1)
-        # v5: walk phase 衰减
-        walk_scale = torch.where(stand_command, 1.0, self.cfg.rewards.walk_decay)
-        return r * walk_scale
+        # v6: 不衰减，全程生效
+        return r
 
     def _reward_feet_clearance(self):
         """

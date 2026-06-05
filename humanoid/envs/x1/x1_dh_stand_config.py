@@ -315,8 +315,8 @@ class X1DHStandCfg(LeggedRobotCfg):
         landing_pitch_offset = 0.05  # ~3 deg, foot pitch up on landing preparation
         feet_to_ankle_distance = 0.041
         cycle_time = 0.9
-        # v5: walk phase 衰减因子 — stability/ref/contact 在 walk 时 × walk_decay
-        walk_decay = 0.3
+        # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
+        # walk_decay = 0.3  # v5: removed, caused stability collapse
         # if true negative total rewards are clipped at zero (avoids early termination problems)
         only_positive_rewards = True
         # tracking reward = exp(-error/sigma)
@@ -327,27 +327,26 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward v5: Stand/Walk 阶段切换
-            #   核心修复：walk phase 衰减"静态拉力"，释放"动态推力"
-            #   walk_decay = 0.3: stability/ref/contact 在 walk 时 ×0.3
-            #   foot_slip 5× 惩罚阻止滑行
-            #   swing_forward 2× 鼓励迈步
+            # Reward v6: 不衰减 + 重平衡
+            #   核心修复：移除 walk_decay（v5 导致 stability 崩溃 → 策略发散）
+            #   改用 scale 重平衡：降低 stability/contact，提升 swing
+            #   walk cmd 下 walk(5.65) > stand-still(5.25) → +0.40 margin
             # ============================================================
             # ① 速度跟踪
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 步态引导 — walk phase 衰减
+            # ② 步态引导 — 不衰减
             ref_joint_pos = 1.0
-            feet_contact_number = 2.0
-            feet_clearance = 1.5
-            # ③ 稳定性 — walk phase 衰减
-            stability = 1.5
-            # ④ 前进动力 — 加强
-            swing_foot_forward = 2.0
+            feet_contact_number = 1.5  # v5: 2.0 → 1.5 降低步态对齐约束
+            feet_clearance = 1.2       # v5: 1.5 → 1.2 回归 v4.2 温和值
+            # ③ 稳定性 — 不衰减，适度降权
+            stability = 1.0            # v5: 1.5 → 1.0 释放静态约束
+            # ④ 前进动力 — 大幅加强
+            swing_foot_forward = 2.5   # v5: 2.0 → 2.5 核心迈步信号
             # ⑤ 能效
             efficiency = -8e-9
-            # ⑥ 脚底打滑 — 5× 惩罚阻止滑行
-            foot_slip = -0.5
+            # ⑥ 脚底打滑 — 适度惩罚
+            foot_slip = -0.3           # v5: -0.5 → -0.3 温和防滑
             # ⑦ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.
