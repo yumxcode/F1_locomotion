@@ -713,15 +713,16 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_swing_foot_forward(self):
         """
         ⑥-a 前进动力 — 鼓励摆动脚向前迈
-        核心缺失项：没有这个信号，机器人不知道"脚要往前走"
+        V7: 加 max=0.5/脚 上限 → scaled max = 2.0 × 1.0 = 2.0
+        防止 swing 线性增长碾压 stability (V6 根因)
         """
         swing_mask = 1 - self._get_stance_mask()  # 1=swing, 0=stance
         # 脚在世界坐标系下的 x 线速度
         foot_vel_x = self.rigid_state[:, self.feet_indices, 7]  # shape: [N, 2]
         # 前进命令方向
         cmd_dir = torch.sign(self.commands[:, 0]).unsqueeze(1)
-        # 摆动脚速度方向与命令方向一致时奖励
-        rew = torch.clamp(foot_vel_x * cmd_dir, min=0)
+        # 摆动脚速度方向与命令方向一致时奖励，上限 0.5 m/s/脚
+        rew = torch.clamp(foot_vel_x * cmd_dir, min=0, max=0.5)
         rew *= swing_mask
         # 仅在有移动命令时生效
         has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).unsqueeze(1)

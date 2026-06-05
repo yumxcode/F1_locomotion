@@ -327,26 +327,31 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward v6: 不衰减 + 重平衡
-            #   核心修复：移除 walk_decay（v5 导致 stability 崩溃 → 策略发散）
-            #   改用 scale 重平衡：降低 stability/contact，提升 swing
-            #   walk cmd 下 walk(5.65) > stand-still(5.25) → +0.40 margin
+            # Reward v7: swing 上限 + scale 重平衡
+            #   V6 根因: swing clamp(min=0) 无上限 → 线性增长碾压 stability
+            #     swing/stab 从 P1 6:1 恶化到 P6 60:1 → 策略发散
+            #   V7 修复:
+            #     1. swing 代码加 max=0.5/脚 上限 → scaled max=2.0 不再无限增长
+            #     2. stability 1.0→1.5 加强平衡约束
+            #     3. swing 2.5→2.0 降低迈步权重
+            #     4. foot_slip -0.3→-0.5 加强行走中防滑
+            #   预期 swing/stab ≈ 9:1 (V6 P2 时 20:1) 且不再恶化
             # ============================================================
             # ① 速度跟踪
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
             # ② 步态引导 — 不衰减
             ref_joint_pos = 1.0
-            feet_contact_number = 1.5  # v5: 2.0 → 1.5 降低步态对齐约束
-            feet_clearance = 1.2       # v5: 1.5 → 1.2 回归 v4.2 温和值
-            # ③ 稳定性 — 不衰减，适度降权
-            stability = 1.0            # v5: 1.5 → 1.0 释放静态约束
-            # ④ 前进动力 — 大幅加强
-            swing_foot_forward = 2.5   # v5: 2.0 → 2.5 核心迈步信号
+            feet_contact_number = 1.5
+            feet_clearance = 1.2
+            # ③ 稳定性 — 加强
+            stability = 1.5            # v6: 1.0 → 1.5 防止崩溃
+            # ④ 前进动力 — 适度回调 + 代码加 max 上限
+            swing_foot_forward = 2.0   # v6: 2.5 → 2.0 配合 max=0.5/脚
             # ⑤ 能效
             efficiency = -8e-9
-            # ⑥ 脚底打滑 — 适度惩罚
-            foot_slip = -0.3           # v5: -0.5 → -0.3 温和防滑
+            # ⑥ 脚底打滑 — 加强
+            foot_slip = -0.5           # v6: -0.3 → -0.5 行走中更强防滑
             # ⑦ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.
