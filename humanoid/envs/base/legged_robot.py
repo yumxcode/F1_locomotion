@@ -348,10 +348,16 @@ class LeggedRobot(BaseTask):
             adds each terms to the episode sums and to the total reward
         """
         self.rew_buf[:] = 0.
+        # per-step raw reward storage (for CSV gait logging)
+        if not hasattr(self, '_per_step_raw_rew'):
+            self._per_step_raw_rew = {}
+        self._per_step_raw_rew.clear()
 
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
-            rew = self.reward_functions[i]() * self.reward_scales[name]
+            raw = self.reward_functions[i]()
+            self._per_step_raw_rew[name] = raw  # raw per-env tensor, unscaled
+            rew = raw * self.reward_scales[name]
             self.rew_buf += rew
             self.episode_sums[name] += rew
         if self.cfg.rewards.only_positive_rewards:

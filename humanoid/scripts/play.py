@@ -32,6 +32,8 @@
 
 
 import os
+import csv
+import sys
 import cv2
 import numpy as np
 from isaacgym import gymapi
@@ -109,6 +111,51 @@ def play(args):
     env_cfg.noise.curriculum = False
     env_cfg.commands.heading_command = False
 
+    # ── Gait CSV Logger ──
+    LOG_GAIT = '--log_csv' in sys.argv
+    gait_csv_file = None
+    gait_writer = None
+    JOINT_LABELS = [
+        'lhp','lhr','lhy','lkp','lap','lar',   # left: hip pitch/roll/yaw, knee, ankle pitch/roll
+        'rhp','rhr','rhy','rkp','rap','rar',   # right
+    ]
+    if LOG_GAIT:
+        gait_dir = os.path.join(LEGGED_GYM_ROOT_DIR, 'gait_logs')
+        os.makedirs(gait_dir, exist_ok=True)
+        gait_path = os.path.join(gait_dir,
+            'gait_{}.csv'.format(datetime.now().strftime('%Y%m%d_%H%M%S')))
+        gait_csv_file = open(gait_path, 'w', newline='')
+        gait_writer = csv.writer(gait_csv_file)
+        header = [
+            # ① time & phase
+            't', 'phase', 'sin_pos', 'cos_pos',
+            # ② contact
+            'stance_l', 'stance_r', 'contact_l', 'contact_r',
+            # ③ base state
+            'base_x', 'base_y', 'base_z',
+            'base_pitch', 'base_roll', 'base_yaw',
+            'base_vx', 'base_vy', 'base_vz',
+            'base_wx', 'base_wy', 'base_wz',
+        ]
+        # ④ joint angles: actual + ref + vel
+        for jl in JOINT_LABELS:
+            header.append(f'dof_{jl}')
+        for jl in JOINT_LABELS:
+            header.append(f'ref_{jl}')
+        for jl in JOINT_LABELS:
+            header.append(f'dvel_{jl}')
+        # ⑤ foot state
+        header += ['foot_z_l','foot_z_r','foot_vx_l','foot_vx_r','foot_vy_l','foot_vy_r','cfz_l','cfz_r']
+        # ⑥ commands
+        header += ['cmd_vx','cmd_vy','cmd_wz']
+        # ⑦ per-step raw reward (10 items)
+        REW_KEYS = ['stability','swing_foot_forward','tracking_lin_vel','tracking_ang_vel',
+                     'ref_joint_pos','feet_contact_number','feet_clearance','foot_slip',
+                     'efficiency','collision']
+        header += [f'rew_{k}' for k in REW_KEYS]
+        gait_writer.writerow(header)
+        print(f'[GaitCSV] Logging to: {gait_path}')
+
     train_cfg.seed = 123145
     print("train_cfg.runner_class_name:", train_cfg.runner_class_name)
 
@@ -179,6 +226,68 @@ def play(args):
         
         obs, critic_obs, rews, dones, infos = env.step(actions.detach())
 
+        # ── Gait CSV logging (100Hz, every control step) ──
+        if LOG_GAIT and gait_writer is not None:
+            ri = robot_index  # shorthand
+            dt = env_cfg.sim.dt * env_cfg.control.decimation
+            t = i * dt
+
+            # phase
+            phase = env._get_phase()[ri].item()
+            sin_pos = np.sin(2 * np.pi * phase)
+            cos_pos = np.cos(2 * np.pi * phase)
+
+            # stance / contact
+            stance_mask = env._get_stance_mask()[ri]
+            contact = (env.contact_forces[ri, env.feet_indices, 2] > 5.).float()
+            row = [t, phase, sin_pos, cos_pos,
+                   stance_mask[0].item(), stance_mask[1].item(),
+                   contact[0].item(), contact[1].item()]
+
+            # base state
+            from humanoid.envs.x1.x1_dh_stand_env import get_euler_xyz_tensor
+            base_euler = get_euler_xyz_tensor(env.base_quat[ri:ri+1])[0]
+            row += [env.root_states[ri,0].item(), env.root_states[ri,1].item(), env.root_states[ri,2].item(),
+                    base_euler[1].item(), base_euler[0].item(), base_euler[2].item(),
+                    env.base_lin_vel[ri,0].item(), env.base_lin_vel[ri,1].item(), env.base_lin_vel[ri,2].item(),
+                    env.base_ang_vel[ri,0].item(), env.base_ang_vel[ri,1].item(), env.base_ang_vel[ri,2].item()]
+
+            # 12 actual joint positions
+            for j in range(12):
+                row.append(env.dof_pos[ri, j].item())
+            # 12 ref joint positions
+            for j in range(12):
+                row.append(env.ref_dof_pos[ri, j].item())
+            # 12 joint velocities
+            for j in range(12):
+                row.append(env.dof_vel[ri, j].item())
+
+            # foot state
+            feet_z = env.rigid_state[ri, env.feet_indices, 2] - env.cfg.rewards.feet_to_ankle_distance
+            feet_vx = env.rigid_state[ri, env.feet_indices, 7]
+            feet_vy = env.rigid_state[ri, env.feet_indices, 8]
+            cfz = env.contact_forces[ri, env.feet_indices, 2]
+            row += [feet_z[0].item(), feet_z[1].item(),
+                    feet_vx[0].item(), feet_vx[1].item(),
+                    feet_vy[0].item(), feet_vy[1].item(),
+                    cfz[0].item(), cfz[1].item()]
+
+            # commands
+            row += [env.commands[ri,0].item(), env.commands[ri,1].item(), env.commands[ri,2].item()]
+
+            # per-step raw rewards
+            REW_KEYS = ['stability','swing_foot_forward','tracking_lin_vel','tracking_ang_vel',
+                         'ref_joint_pos','feet_contact_number','feet_clearance','foot_slip',
+                         'efficiency','collision']
+            per_step = getattr(env, '_per_step_raw_rew', {})
+            for k in REW_KEYS:
+                if k in per_step:
+                    row.append(per_step[k][ri].item())
+                else:
+                    row.append(0.0)
+
+            gait_writer.writerow(row)
+
         if RENDER:
             env.gym.fetch_results(env.sim, True)
             env.gym.step_graphics(env.sim)
@@ -241,6 +350,11 @@ def play(args):
 
     if RENDER:
         video.release()
+
+    # ── Close gait CSV ──
+    if gait_csv_file is not None:
+        gait_csv_file.close()
+        print(f'[GaitCSV] File closed: {gait_path}')
 
 if __name__ == '__main__':
     EXPORT_POLICY = False
