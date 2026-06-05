@@ -229,6 +229,12 @@ def get_args():
             "type": int,
             "help": "Maximum number of training iterations. Overrides config file if provided.",
         },
+        {
+            "name": "--log_csv",
+            "action": "store_true",
+            "default": False,
+            "help": "Enable per-frame gait CSV logging during play mode",
+        },
     ]
     # parse arguments
     args = gymutil.parse_arguments(

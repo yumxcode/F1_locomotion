@@ -112,7 +112,7 @@ def play(args):
     env_cfg.commands.heading_command = False
 
     # ── Gait CSV Logger ──
-    LOG_GAIT = '--log_csv' in sys.argv
+    LOG_GAIT = args.log_csv
     gait_csv_file = None
     gait_writer = None
     JOINT_LABELS = [
