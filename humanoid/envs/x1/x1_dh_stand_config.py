@@ -312,7 +312,6 @@ class X1DHStandCfg(LeggedRobotCfg):
         final_swing_joint_delta_pos = [0.25, 0.05, -0.11, 0.35, -0.16, 0.0, -0.25, -0.05, 0.11, 0.35, -0.16, 0.0]
         target_feet_height = 0.05   # 保持 V7 — 抬脚是正确步态，不应降低
         target_feet_height_max = 0.08  # 保持 V7
-        landing_pitch_offset = 0.25  # v8: 0.05→0.25 (~14°) heel-strike: 落地时踝背屈，脚跟先着地
         feet_to_ankle_distance = 0.041
         cycle_time = 0.9
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
@@ -323,18 +322,20 @@ class X1DHStandCfg(LeggedRobotCfg):
         # v4: sigma=0.5 → 等效 exp(-err/0.5)=exp(-err×2)，比 v3 的 exp(-err×5) 梯度区域更宽
         # exp(-0.5×2)=0.37 仍有信号 (v3: exp(-0.5×5)=0.08 近乎死区)
         tracking_sigma = 0.5
-        max_contact_force = 700  # forces above this value are penalized (safety reference)
+        max_contact_force = 500  # V9: 700→500, 捕获更多落地冲击 (≈3.4× 体重)
+        compliance_force_threshold = 300  # V9: 落地柔顺激活阈值 (≈2× 体重, 高于正常站立 ~150N)
         
         class scales:
             # ============================================================
-            # Reward v8: heel-toe landing — 脚跟先着地 + 滚动到全脚掌
-            #   V7 现状: 落地冲击 16× 体重 (max 4824N), ankle 落地时 -15° 跖屈(平拍)
-            #   V8 方案:
-            #     1. landing_pitch_offset 0.05→0.25 → 落地时 ankle 背屈 ~0° → heel-strike
-            #     2. 新增 landing_impact reward → 惩罚接触力 > 700N
-            #     3. foot_slip -0.5→-1.0 → 加强防滑
-            #     4. stability 1.5→1.8 → 加强平衡
-            #   URDF 已确认不对称 (右腿偏转 0.49°, y 偏移 6mm)，接受此物理现实
+            # Reward v9: 柔和着地 — 非对称摆动轨迹 + 接触力惩罚 + 膝关节吸收
+            #   V8 失败原因: heel-toe 在刚性脚下触发 foot_slip(ang_vel) 惩罚
+            #   V9 方案:
+            #     1. 移除 heel-toe offset — 刚性铁板脚不做 heel-strike
+            #     2. 下降段 sin² 轨迹 — 脚接近地面时速度 → 0 (P2)
+            #     3. landing_impact 阈值 700→500, 权重 -0.05→-0.3 (P1)
+            #     4. 新增 landing_compliance — 鼓励落地时整腿屈曲吸收 (P1)
+            #     5. foot_slip 恢复 -0.5 — 撤销 V8 的翻倍
+            #     6. stability 恢复 1.5 — V8 的 1.8 不再需要
             # ============================================================
             # ① 速度跟踪
             tracking_lin_vel = 2.5
@@ -343,21 +344,23 @@ class X1DHStandCfg(LeggedRobotCfg):
             ref_joint_pos = 1.0
             feet_contact_number = 1.5
             feet_clearance = 1.2
-            # ③ 稳定性 — 加强
-            stability = 1.8            # v8: 1.5 → 1.8
+            # ③ 稳定性 — 恢复 V7
+            stability = 1.5
             # ④ 前进动力 — 保持
             swing_foot_forward = 2.0
             # ⑤ 能效
             efficiency = -8e-9
-            # ⑥ 脚底打滑 — 加倍
-            foot_slip = -1.0           # v8: -0.5 → -1.0
+            # ⑥ 脚底打滑 — 恢复 V7
+            foot_slip = -0.5
             # ⑦ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.
             dof_vel_limits = -1
             dof_torque_limits = -0.1
-            # ⑧ v8 新增: 落地冲击惩罚
-            landing_impact = -0.05     # 惩罚落地冲击力 > 700N
+            # ⑧ V9: 落地冲击 — 加强 6×, 阈值降低到 500N
+            landing_impact = -0.3
+            # ⑧-a V9 新增: 落地柔顺 — 鼓励整腿屈曲吸收
+            landing_compliance = 0.3
 
     class normalization:
         class obs_scales:

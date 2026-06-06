@@ -274,50 +274,50 @@ class X1DHStandEnv(LeggedRobot):
     def compute_ref_state(self):
         phase = self._get_phase()
         sin_pos = torch.sin(2 * torch.pi * phase)
+        cos_pos = torch.cos(2 * torch.pi * phase)
         sin_pos_l = sin_pos.clone()
         sin_pos_r = sin_pos.clone()
 
         self.ref_dof_pos = torch.zeros_like(self.dof_pos)
-        # left swing
+
+        # ====== V9: 非对称摆动轨迹 — 下降段 sin² 减速，柔和着地 ======
+        # 上升段 (抬腿): 保持 |sin| — 快速抬腿
+        # 下降段 (落地): 使用 sin² — 脚接近地面时速度 → 0，减少冲击
+        #
+        # 方向判定: sin 和 cos 同号 → 下降段 (sin 正在趋向 0)
+        #           sin 和 cos 异号 → 上升段 (sin 正在远离 0)
+
+        # Left swing (sin_pos_l < 0)
         sin_pos_l[sin_pos_l > 0] = 0
-        self.ref_dof_pos[:, 0] = -sin_pos_l * self.cfg.rewards.final_swing_joint_delta_pos[0]
-        self.ref_dof_pos[:, 1] = -sin_pos_l * self.cfg.rewards.final_swing_joint_delta_pos[1]
-        self.ref_dof_pos[:, 2] = -sin_pos_l * self.cfg.rewards.final_swing_joint_delta_pos[2]
-        self.ref_dof_pos[:, 3] = -sin_pos_l * self.cfg.rewards.final_swing_joint_delta_pos[3]
-        self.ref_dof_pos[:, 4] = -sin_pos_l * self.cfg.rewards.final_swing_joint_delta_pos[4]
-        self.ref_dof_pos[:, 5] = -sin_pos_l * self.cfg.rewards.final_swing_joint_delta_pos[5]
-        # right
+        abs_sin_l = torch.abs(sin_pos_l)
+        is_descent_l = cos_pos > 0  # sin 从负趋向 0
+        scale_l = torch.where(is_descent_l, abs_sin_l ** 2, abs_sin_l)
+
+        self.ref_dof_pos[:, 0] = -scale_l * self.cfg.rewards.final_swing_joint_delta_pos[0]
+        self.ref_dof_pos[:, 1] = -scale_l * self.cfg.rewards.final_swing_joint_delta_pos[1]
+        self.ref_dof_pos[:, 2] = -scale_l * self.cfg.rewards.final_swing_joint_delta_pos[2]
+        self.ref_dof_pos[:, 3] = -scale_l * self.cfg.rewards.final_swing_joint_delta_pos[3]
+        self.ref_dof_pos[:, 4] = -scale_l * self.cfg.rewards.final_swing_joint_delta_pos[4]
+        self.ref_dof_pos[:, 5] = -scale_l * self.cfg.rewards.final_swing_joint_delta_pos[5]
+
+        # Right swing (sin_pos_r > 0)
         sin_pos_r[sin_pos_r < 0] = 0
-        self.ref_dof_pos[:, 6] = sin_pos_r *  self.cfg.rewards.final_swing_joint_delta_pos[6]
-        self.ref_dof_pos[:, 7] = sin_pos_r *  self.cfg.rewards.final_swing_joint_delta_pos[7]
-        self.ref_dof_pos[:, 8] = sin_pos_r *  self.cfg.rewards.final_swing_joint_delta_pos[8]
-        self.ref_dof_pos[:, 9] = sin_pos_r *  self.cfg.rewards.final_swing_joint_delta_pos[9]
-        self.ref_dof_pos[:, 10] = sin_pos_r * self.cfg.rewards.final_swing_joint_delta_pos[10]
-        self.ref_dof_pos[:, 11] = sin_pos_r * self.cfg.rewards.final_swing_joint_delta_pos[11]
+        abs_sin_r = torch.abs(sin_pos_r)
+        is_descent_r = cos_pos < 0  # sin 从正趋向 0
+        scale_r = torch.where(is_descent_r, abs_sin_r ** 2, abs_sin_r)
+
+        self.ref_dof_pos[:, 6] = scale_r *  self.cfg.rewards.final_swing_joint_delta_pos[6]
+        self.ref_dof_pos[:, 7] = scale_r *  self.cfg.rewards.final_swing_joint_delta_pos[7]
+        self.ref_dof_pos[:, 8] = scale_r *  self.cfg.rewards.final_swing_joint_delta_pos[8]
+        self.ref_dof_pos[:, 9] = scale_r *  self.cfg.rewards.final_swing_joint_delta_pos[9]
+        self.ref_dof_pos[:, 10] = scale_r * self.cfg.rewards.final_swing_joint_delta_pos[10]
+        self.ref_dof_pos[:, 11] = scale_r * self.cfg.rewards.final_swing_joint_delta_pos[11]
 
         self.ref_dof_pos[torch.abs(sin_pos) < 0.1] = 0.
 
-        # ====== Heel-strike: 摆动相末段踝背屈，脚跟先着地再滚动到全脚掌 (V8) ======
-        # V7: 线性 ramp + offset=0.05 → 落地时 ankle=-20° 跖屈 (平拍地面, 冲击 16× 体重)
-        # V8: 三次 ramp + offset=0.25 → 落地时 ankle≈0° (脚跟先着地, 滚动吸震)
-        landing_pitch_offset = self.cfg.rewards.landing_pitch_offset
-        # 左脚摆动相末段（sin_pos 从负往零走）
-        landing_prep_l = (sin_pos < 0) & (sin_pos > -0.8)
-        # 右脚摆动相末段（sin_pos 从正往零走）
-        landing_prep_r = (sin_pos > 0) & (sin_pos < 0.8)
-        # 三次方渐变：在落地前最后 20% (sin_pos > 0.6) 急剧增加背屈
-        # 这样大部分 swing 期间背屈不大，只在接近落地时快速翘起脚尖
-        t_l = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0, max=1)
-        t_r = torch.clamp(1.0 - torch.abs(sin_pos) / 0.8, min=0, max=1)
-        # 三次 smoothstep: 3t² - 2t³, 在 t=0→0, t=1→1, 中间加速
-        ramp_l = (3 * t_l ** 2 - 2 * t_l ** 3) * landing_prep_l.float()
-        ramp_r = (3 * t_r ** 2 - 2 * t_r ** 3) * landing_prep_r.float()
-        self.ref_dof_pos[:, 4] += landing_pitch_offset * ramp_l   # left ankle pitch
-        self.ref_dof_pos[:, 10] += landing_pitch_offset * ramp_r  # right ankle pitch
-        
         # if use_ref_actions=True, action += ref_action
         self.ref_action = 2 * self.ref_dof_pos
-        
+
         # self.ref_dof_pos set ref dof pos for swing leg, ref_dof_pos=0 for stance leg
         self.ref_dof_pos += self.default_dof_pos
 
@@ -737,13 +737,48 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_landing_impact(self):
         """
-        ⑧ 落地冲击惩罚 — 惩罚接触力 > max_contact_force (V8 新增)
-        只在接触力超过阈值时生效，鼓励柔和着地
+        ⑧ 落地冲击惩罚 — V9: 降低阈值到 500N (≈3.4× 体重)
+        使用平方惩罚: excess = (cfz - threshold)² / threshold²
+        鼓励策略通过膝关节屈曲/全身吸收来降低接触力
+        参考: QuietWalk (2026) — GRF 惩罚让策略自主学习吸收策略
         """
-        max_f = self.cfg.rewards.max_contact_force  # 700N
+        max_f = self.cfg.rewards.max_contact_force
         cfz = self.contact_forces[:, self.feet_indices, 2]  # [N, 2]
         excess = torch.clamp(cfz - max_f, min=0.) ** 2 / (max_f ** 2)
         return torch.sum(excess, dim=1)
+
+    def _reward_landing_compliance(self):
+        """
+        ⑧-a 落地柔顺奖励 — V9 新增
+        在高接触力阶段，奖励整条腿的屈曲吸收。
+        
+        整腿视角 (用户反馈): 同样的膝关节角度在不同髋关节角度下
+        对应不同的有效腿长变化。因此直接用接触力作为"需要吸收"的信号，
+        用 hip+knee 的角速度之和作为"正在吸收"的信号。
+        
+        物理含义: 当脚受到高接触力时，如果同侧髋+膝正在屈曲
+        (角速度 > 0)，说明腿在主动缩短以吸收冲击。
+        奖励 = 归一化屈曲角速度 × 高力 mask。
+        
+        信号密度: 在高接触力期间持续激活 (不是单帧脉冲)，
+        约占 10-15% 的步数，足以形成有效梯度。
+        """
+        cfz = self.contact_forces[:, self.feet_indices, 2]  # [N, 2]
+        
+        # 高接触力阈值: 2× 体重 (~300N)，正常单脚站立约 150N
+        high_force = cfz > self.cfg.rewards.compliance_force_threshold  # [N, 2]
+        
+        # 整腿屈曲角速度: hip_pitch_vel + knee_pitch_vel
+        # 左腿: joints [0]=hip_pitch, [3]=knee_pitch
+        # 右腿: joints [6]=hip_pitch, [9]=knee_pitch
+        left_leg_flex = torch.clamp(self.dof_vel[:, 0] + self.dof_vel[:, 3], min=0, max=5.0)
+        right_leg_flex = torch.clamp(self.dof_vel[:, 6] + self.dof_vel[:, 9], min=0, max=5.0)
+        
+        # 归一化屈曲速度 (0~1)，然后乘以高力 mask
+        left_rew = (left_leg_flex / 5.0) * high_force[:, 0].float()
+        right_rew = (right_leg_flex / 5.0) * high_force[:, 1].float()
+        
+        return left_rew + right_rew
 
     def _reward_foot_slip(self):
         """
