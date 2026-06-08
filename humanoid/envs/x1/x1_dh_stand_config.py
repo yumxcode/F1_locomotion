@@ -326,29 +326,37 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V10: 最小 reward — 步态涌现
+            # Reward V10-b: 5 项纯粹版 — 真正的大一统
             # 灵感: Schumacher 2025 iScience "biologically plausible objectives"
             # r = r_vel − c_effort − c_pain
-            # 核心洞察: 自然步态 = 速度跟踪 + 能效最优 + 疼痛避免 的涌现结果
-            # 不需要参考轨迹/步态时钟/抬脚高度/接触调度
+            #
+            # V10-a → V10-b 改动:
+            #   1. 移除 4 项死信号 (stability/collision/dof_vel/dof_torque)
+            #      — 实测贡献 <2%, 纯梯度噪声, episode终止/PD物理限制已覆盖
+            #   2. efficiency -2e-4 → -4e-4
+            #      — V10-a 3900iter 后 efficiency 无改善, scale 不够驱动涌现
+            #      — 加倍后 efficiency:tracking 从 1:4 → 1:2, 足以拉动能效学习
             # =============================================================
             # ① 任务目标 — "往前走"
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 生存约束 — "别摔" (降权: episode终止是最终保险)
-            stability = 0.5
-            # ③ 能效 — "省力" (步态涌现的核心驱动力)
-            # V10-a: -8e-9→-2e-4, 正常走(30Nm) 占正向~60%, 强力驱动步态涌现
-            # 参考 Schumacher: effort 是核心, α(t)自适应到很大
-            efficiency = -2e-4
-            # ④ 疼痛 — = Schumacher c_pain 的 GRF 项 (>1.2×体重 才惩罚)
+            # ② 能效 — "省力" (步态涌现的核心驱动力)
+            # V10-b: -2e-4→-4e-4, V10-a 显示 -2e-4 不足以驱动能效改善
+            efficiency = -4e-4
+            # ③ 疼痛 — = Schumacher c_pain 的 GRF 项 (>1.2×体重 才惩罚)
             landing_impact = -0.3
-            # ⑤ 安全硬约束
-            collision = -1.
+            # ④ 安全网 — V10-a 实测 dof_pos_limits 在触发 (-0.03~-0.11/ep)
             dof_pos_limits = -10.
-            dof_vel_limits = -1
-            dof_torque_limits = -0.1
-            # === V10 移除 (scale=0): ===
+            # === V10-b 移除 (scale=0): ===
+            # stability — 0.45% 贡献, episode终止是最终约束
+            # collision — 0.01% 贡献, 身体碰撞几乎不发生
+            # dof_vel_limits — 2.5% 贡献, PD控制器物理限制速度
+            # dof_torque_limits — 0.3% 贡献, 电机硬限制力矩
+            stability = 0.0
+            collision = 0.0
+            dof_vel_limits = 0.0
+            dof_torque_limits = 0.0
+            # === V10-a 移除 (scale=0): ===
             # ref_joint_pos — 步态从物理涌现，不需参考轨迹
             # feet_contact_number — 相位对齐是结果不是目标
             # feet_clearance — 抬脚高度由能效自然决定
