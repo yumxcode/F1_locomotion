@@ -326,23 +326,24 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V10-b: 5 项纯粹版 — 真正的大一统
+            # Reward V10-c: 5 项 + 机械功率方案B
             # 灵感: Schumacher 2025 iScience "biologically plausible objectives"
             # r = r_vel − c_effort − c_pain
             #
-            # V10-a → V10-b 改动:
-            #   1. 移除 4 项死信号 (stability/collision/dof_vel/dof_torque)
-            #      — 实测贡献 <2%, 纯梯度噪声, episode终止/PD物理限制已覆盖
-            #   2. efficiency -2e-4 → -4e-4
-            #      — V10-a 3900iter 后 efficiency 无改善, scale 不够驱动涌现
-            #      — 加倍后 efficiency:tracking 从 1:4 → 1:2, 足以拉动能效学习
+            # V10-b → V10-c 改动:
+            #   1. efficiency 从 τ² → |τ·q̇| 机械功率
+            #      — τ² 对站立不公平(等长收缩也高 τ²), -4e-4 导致策略锁死
+            #      — |τ·q̇| 站立时 q̇≈0 功率≈0, 消除"站着不动"局部最优
+            #      — scale 校准: 走路 |τ·q̇|≈360, scale -1e-3, 惩罚 ≈ -0.36
+            #   2. 保持 V10-b 其他设置不变 (5 reward terms)
             # =============================================================
             # ① 任务目标 — "往前走"
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 能效 — "省力" (步态涌现的核心驱动力)
-            # V10-b: -2e-4→-4e-4, V10-a 显示 -2e-4 不足以驱动能效改善
-            efficiency = -4e-4
+            # ② 能效 — 机械功率 |τ·q̇| (V10-c 方案B)
+            # 站立时 q̇≈0 → 功率≈0 → 不惩罚站立
+            # 走路时 |τ·q̇|≈360, scale -1e-3 → 惩罚 ≈ -0.36, tracking 余量 3.2×
+            efficiency = -1e-3
             # ③ 疼痛 — = Schumacher c_pain 的 GRF 项 (>1.2×体重 才惩罚)
             landing_impact = -0.3
             # ④ 安全网 — V10-a 实测 dof_pos_limits 在触发 (-0.03~-0.11/ep)

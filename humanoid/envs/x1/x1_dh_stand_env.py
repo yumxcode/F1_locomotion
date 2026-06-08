@@ -645,12 +645,25 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_efficiency(self):
         """
-        ③ 能效 — τ² 惩罚 (IsaacGym / Rudin 2022 标准方案)
-        业界最成熟的方案：直接用 sum(τ²)，配合小 scale 温和约束。
-        不需要 CoT 归一化或 exp 包裹。
-        有效惩罚 ≈ -2e-5 × 3000 = -0.06，温和不主导。
+        ③ 能效 — 机械功率 |τ·q̇| 惩罚 (V10-c: 方案B)
+        
+        核心改进: 从 τ² 切换到 |τ·q̇|
+        - τ² 对"站立"不公平: 站立需要大 τ 支撑体重(等长收缩), τ² ≈ 100
+        - |τ·q̇| 只惩罚机械做功: 站立时 q̇ ≈ 0, 功率 ≈ 0
+        - 消除了"站着不动"局部最优的效率优势
+        
+        量级对比:
+        - 旧 τ²: 站立 ≈ 100, 走路 ≈ 1750 (17× 差)
+        - 新 |τ·q̇|: 站立 ≈ 0, 走路 ≈ 360 (∞ × 差, 彻底消除站立优势)
+        
+        Scale 校准:
+        - 走路时 |τ·q̇| ≈ 360, scale -1e-3 → 惩罚 ≈ -0.36
+        - tracking_lin_vel 走路 ≈ +1.15, 3.2× 余量
+        - 站立时 |τ·q̇| ≈ 0, 惩罚 ≈ 0, 但 tracking 也 ≈ 0
+        - 探索走路: tracking +0.05, efficiency -0.01 → 净正! 探索被鼓励!
         """
-        return torch.sum(torch.square(self.torques), dim=1)
+        mechanical_power = torch.sum(torch.abs(self.torques * self.dof_vel), dim=1)
+        return mechanical_power
 
     def _reward_ref_joint_pos(self):
         """

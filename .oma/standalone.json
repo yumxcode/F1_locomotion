@@ -1,6 +1,6 @@
 {
-  "stage": "train",
-  "skill": "$train",
-  "enteredAt": "2026-06-02T06:44:12.573Z",
-  "reason": "direct entry via oma go train"
+  "stage": "design",
+  "skill": "$design",
+  "enteredAt": "2026-06-08T03:24:00.000Z",
+  "reason": "user request: oma go design — 大一统 reward 设计主线"
 }
