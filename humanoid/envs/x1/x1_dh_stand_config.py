@@ -316,51 +316,43 @@ class X1DHStandCfg(LeggedRobotCfg):
         cycle_time = 0.9
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
-        # if true negative total rewards are clipped at zero (avoids early termination problems)
-        only_positive_rewards = True
+        # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
+        only_positive_rewards = False
         # tracking reward = exp(-error/sigma)
-        # v4: sigma=0.5 → 等效 exp(-err/0.5)=exp(-err×2)，比 v3 的 exp(-err×5) 梯度区域更宽
-        # exp(-0.5×2)=0.37 仍有信号 (v3: exp(-0.5×5)=0.08 近乎死区)
         tracking_sigma = 0.5
-        max_contact_force = 500  # V9: 700→500, 捕获更多落地冲击 (≈3.4× 体重)
-        compliance_force_threshold = 300  # V9: 落地柔顺激活阈值 (≈2× 体重, 高于正常站立 ~150N)
+        # V10: GRF 阈值降低到 300N (≈1.2× 体重), 对齐 Schumacher c_pain
+        max_contact_force = 300
+        compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
         
         class scales:
             # ============================================================
-            # Reward v9: 柔和着地 — 非对称摆动轨迹 + 接触力惩罚 + 膝关节吸收
-            #   V8 失败原因: heel-toe 在刚性脚下触发 foot_slip(ang_vel) 惩罚
-            #   V9 方案:
-            #     1. 移除 heel-toe offset — 刚性铁板脚不做 heel-strike
-            #     2. 下降段 sin² 轨迹 — 脚接近地面时速度 → 0 (P2)
-            #     3. landing_impact 阈值 700→500, 权重 -0.05→-0.3 (P1)
-            #     4. 新增 landing_compliance — 鼓励落地时整腿屈曲吸收 (P1)
-            #     5. foot_slip 恢复 -0.5 — 撤销 V8 的翻倍
-            #     6. stability 恢复 1.5 — V8 的 1.8 不再需要
-            # ============================================================
-            # ① 速度跟踪
+            # Reward V10: 最小 reward — 步态涌现
+            # 灵感: Schumacher 2025 iScience "biologically plausible objectives"
+            # r = r_vel − c_effort − c_pain
+            # 核心洞察: 自然步态 = 速度跟踪 + 能效最优 + 疼痛避免 的涌现结果
+            # 不需要参考轨迹/步态时钟/抬脚高度/接触调度
+            # =============================================================
+            # ① 任务目标 — "往前走"
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 步态引导 — 不衰减
-            ref_joint_pos = 1.0
-            feet_contact_number = 1.5
-            feet_clearance = 1.2
-            # ③ 稳定性 — 恢复 V7
-            stability = 1.5
-            # ④ 前进动力 — 保持
-            swing_foot_forward = 2.0
-            # ⑤ 能效
+            # ② 生存约束 — "别摔" (降权: episode终止是最终保险)
+            stability = 0.5
+            # ③ 能效 — "省力" (步态涌现的核心驱动力)
             efficiency = -8e-9
-            # ⑥ 脚底打滑 — 恢复 V7
-            foot_slip = -0.5
-            # ⑦ 安全硬约束
+            # ④ 疼痛 — = Schumacher c_pain 的 GRF 项 (>1.2×体重 才惩罚)
+            landing_impact = -0.3
+            # ⑤ 安全硬约束
             collision = -1.
             dof_pos_limits = -10.
             dof_vel_limits = -1
             dof_torque_limits = -0.1
-            # ⑧ V9: 落地冲击 — 加强 6×, 阈值降低到 500N
-            landing_impact = -0.3
-            # ⑧-a V9 新增: 落地柔顺 — 鼓励整腿屈曲吸收
-            landing_compliance = 0.3
+            # === V10 移除 (scale=0): ===
+            # ref_joint_pos — 步态从物理涌现，不需参考轨迹
+            # feet_contact_number — 相位对齐是结果不是目标
+            # feet_clearance — 抬脚高度由能效自然决定
+            # swing_foot_forward — 已被 tracking_lin_vel 覆盖
+            # foot_slip — 滑动浪费能量，efficiency 自然惩罚
+            # landing_compliance — 屈曲吸收是 landing_impact 的最优解
 
     class normalization:
         class obs_scales:

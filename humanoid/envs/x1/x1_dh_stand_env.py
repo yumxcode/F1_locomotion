@@ -627,13 +627,12 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_stability(self):
         """
-        ② 稳定性 — 不摔倒 + 质心稳定
-        v6: 移除 walk_decay，全程不衰减（v5 的衰减导致 stability 崩溃）
+        ② 稳定性 — V10: 精简为姿态 + 高度
+        移除: COM加速度、关节yaw/roll偏差、脚旋转 — 这些是自然步态的结果，不需显式约束
+        摔倒 = episode终止，是最终保险；此处只提供保持直立/高度的梯度
         """
-        # --- 躯干姿态（pitch/roll → 0）---
-        quat_mismatch = torch.exp(-torch.sum(torch.abs(self.base_euler_xyz[:, :2]), dim=1) * 10)
+        # --- 躯干姿态 ---
         orientation = torch.exp(-torch.norm(self.projected_gravity[:, :2], dim=1) * 20)
-        r_orient = (quat_mismatch + orientation) / 2.
 
         # --- 质心高度稳定 ---
         stance_mask = self._get_stance_mask()
@@ -642,26 +641,7 @@ class X1DHStandEnv(LeggedRobot):
         base_height = self.root_states[:, 2] - (measured_heights - self.cfg.rewards.feet_to_ankle_distance)
         r_height = torch.exp(-torch.abs(base_height - self.cfg.rewards.base_height_target) * 100)
 
-        # --- 质心加速度抑制 ---
-        root_acc = self.last_root_vel - self.root_states[:, 7:13]
-        r_acc = torch.exp(-torch.norm(root_acc, dim=1) * 3)
-
-        # --- 关节偏离默认姿态（yaw/roll 方向）---
-        joint_diff = self.dof_pos - self.default_joint_pd_target
-        left_yaw_roll = joint_diff[:, [1,2,5]]
-        right_yaw_roll = joint_diff[:, [7,8,11]]
-        yaw_roll = torch.norm(left_yaw_roll, dim=1) + torch.norm(right_yaw_roll, dim=1)
-        yaw_roll = torch.clamp(yaw_roll - 0.1, 0, 50)
-        r_joint = torch.exp(-yaw_roll * 100)
-
-        # --- 脚旋转抑制 ---
-        feet_rot = torch.sum(torch.square(self.feet_euler_xyz[:, :, :2]), dim=[1, 2])
-        r_feet = torch.exp(-feet_rot * 15)
-
-        r = (r_orient + r_height + r_acc + r_joint + r_feet) / 5.
-
-        # v6: 不衰减，全程生效
-        return r
+        return (orientation + r_height) / 2.
 
     def _reward_efficiency(self):
         """
