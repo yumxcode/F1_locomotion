@@ -338,7 +338,9 @@ class X1DHStandCfg(LeggedRobotCfg):
             # ② 生存约束 — "别摔" (降权: episode终止是最终保险)
             stability = 0.5
             # ③ 能效 — "省力" (步态涌现的核心驱动力)
-            efficiency = -8e-9
+            # V10-a: -8e-9→-2e-4, 正常走(30Nm) 占正向~60%, 强力驱动步态涌现
+            # 参考 Schumacher: effort 是核心, α(t)自适应到很大
+            efficiency = -2e-4
             # ④ 疼痛 — = Schumacher c_pain 的 GRF 项 (>1.2×体重 才惩罚)
             landing_impact = -0.3
             # ⑤ 安全硬约束
