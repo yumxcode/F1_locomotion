@@ -57,6 +57,13 @@ class X1DHStandCfg(LeggedRobotCfg):
         pos_limit = 1.0
         vel_limit = 1.0
         torque_limit = 0.85
+        # termination thresholds
+        # V10-d: 0.4 rad (22.9°), was 1.5 rad (85.9°)
+        # GOOD walking P99: pitch=6.5°, roll=12.3°, max: pitch=7.0°, roll=12.5°
+        # 0.4 rad = GOOD max × ~2, gives 2-3× margin for normal gait
+        # BAD model hits 22.9° at t=0.23s vs body contact at t=0.35s (earlier termination)
+        termination_pitch_threshold = 0.4  # rad (22.9°)
+        termination_roll_threshold = 0.4   # rad (22.9°)
 
 
     class asset(LeggedRobotCfg.asset):

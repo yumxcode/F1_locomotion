@@ -209,8 +209,10 @@ class LeggedRobot(BaseTask):
         self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         
-        roll_cutoff = torch.abs(self.base_euler_xyz[:,0]) > 1.5
-        pitch_cutoff = torch.abs(self.base_euler_xyz[:,1]) > 1.5
+        pitch_th = getattr(self.cfg.safety, 'termination_pitch_threshold', 1.5)
+        roll_th = getattr(self.cfg.safety, 'termination_roll_threshold', 1.5)
+        roll_cutoff = torch.abs(self.base_euler_xyz[:,0]) > roll_th
+        pitch_cutoff = torch.abs(self.base_euler_xyz[:,1]) > pitch_th
 
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= roll_cutoff
