@@ -330,44 +330,35 @@ class X1DHStandCfg(LeggedRobotCfg):
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
         only_positive_rewards = False
         # tracking reward = exp(-error/sigma)
-        tracking_sigma = 0.5
+        tracking_sigma = 0.08  # V11: 收窄 6.25×, 堵"站着不动拿高分"漏洞
         # V10: GRF 阈值降低到 300N (≈1.2× 体重), 对齐 Schumacher c_pain
         max_contact_force = 300
         compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
         
         class scales:
             # ============================================================
-            # Reward V11: 堵漏洞 + 最小改动
-            # V10 问题诊断:
-            #   - 策略找到 "坐下存活" 漏洞 (无 height termination)
-            #   - 无 ref_joint_pos → 策略不知道怎么走 → 站着不动/坐下
-            #   - efficiency scale = -1e-3 太大 → 抑制任何大动作
-            #   - 训练时 mean reward 高是因为坐着不动的 env episode 长
+            # Reward V11: 大一统 + 堵漏洞
+            # 主线: 验证 "tracking + stability + efficiency + pain" 能否涌现步态
             #
-            # V11 修复:
-            #   L1: 加 height termination (z < 0.35m → terminate)
-            #   L3: 恢复 ref_joint_pos (步态引导)
-            #   L4: efficiency scale -1e-3 → -1e-5 (保留 |τ·q̇| 但降低 100×)
-            #   恢复 V9 的 4 项步态 reward
+            # V10 教训:
+            #   - efficiency scale -1e-3 太大 → 抑制所有动作 → 策略学不动
+            #   - 无 height termination → "坐下存活" 漏洞
+            #   - 不需要 ref_joint_pos 等 reward 补丁, 先堵 termination 漏洞再观察
+            #
+            # V11 只做 2 件事:
+            #   1. 加 height termination (z < 0.35m → terminate)
+            #   2. efficiency scale -1e-3 → -1e-5
             # =============================================================
-            # ① 任务目标 — "往前走"
+            # ① 任务目标
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 步态引导 — 不衰减
-            ref_joint_pos = 1.0
-            feet_contact_number = 1.5
-            feet_clearance = 1.2
-            # ③ 稳定性
+            # ② 稳定性
             stability = 1.5
-            # ④ 前进动力
-            swing_foot_forward = 2.0
-            # ⑤ 能效 — 机械功率 |τ·q̇| (V11: scale 降 100×)
+            # ③ 能效 — 机械功率 |τ·q̇| (V11: scale 降 100×)
             efficiency = -1e-5
-            # ⑥ 脚底打滑
-            foot_slip = -0.5
-            # ⑦ 疼痛 — GRF 项
+            # ④ 疼痛 — GRF 项
             landing_impact = -0.3
-            # ⑧ 安全网
+            # ⑤ 安全网
             dof_pos_limits = -10.
             # === 移除 (scale=0): ===
             collision = 0.0
