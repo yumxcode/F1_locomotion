@@ -326,34 +326,32 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V10-c: 5 项 + 机械功率方案B
-            # 灵感: Schumacher 2025 iScience "biologically plausible objectives"
-            # r = r_vel − c_effort − c_pain
+            # Reward V10-d: 6 项 + 机械功率方案B
+            # 基于 V10-c 分析: 下落阶段 5 项 reward 梯度矩阵中
+            #   - tracking_lin_vel: 策略不可控 (空中无摩擦)
+            #   - tracking_ang_vel: 无梯度 (reward≈1.0)
+            #   - efficiency:       无方向 (好坏动作同样被惩罚)
+            #   - landing_impact:   不触发 (脚悬空 GRF=0)
+            #   - dof_pos_limits:   不触发 (关节远未到极限)
+            # → 策略在下落阶段输出随机 → 训练靠 domain rand 运气 → play 崩溃
             #
-            # V10-b → V10-c 改动:
-            #   1. efficiency 从 τ² → |τ·q̇| 机械功率
-            #      — τ² 对站立不公平(等长收缩也高 τ²), -4e-4 导致策略锁死
-            #      — |τ·q̇| 站立时 q̇≈0 功率≈0, 消除"站着不动"局部最优
-            #      — scale 校准: 走路 |τ·q̇|≈360, scale -1e-3, 惩罚 ≈ -0.36
-            #   2. 保持 V10-b 其他设置不变 (5 reward terms)
+            # 修复: 恢复 stability (姿态+高度)
+            #   - 下落阶段: height reward 暴跌 → 梯度推动"伸展膝盖准备落地"
+            #   - GOOD vs BAD 模型: 15步内累积差 2.10 (×1.5 scale)
+            #   - 全程覆盖: 下落+站立+行走, 不仅限于下落阶段
             # =============================================================
             # ① 任务目标 — "往前走"
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 能效 — 机械功率 |τ·q̇| (V10-c 方案B)
-            # 站立时 q̇≈0 → 功率≈0 → 不惩罚站立
-            # 走路时 |τ·q̇|≈360, scale -1e-3 → 惩罚 ≈ -0.36, tracking 余量 3.2×
+            # ② 稳定性 — 姿态+高度 (V10-d 恢复)
+            stability = 1.5
+            # ③ 能效 — 机械功率 |τ·q̇|
             efficiency = -1e-3
-            # ③ 疼痛 — = Schumacher c_pain 的 GRF 项 (>1.2×体重 才惩罚)
+            # ④ 疼痛 — GRF 项 (>300N 才惩罚)
             landing_impact = -0.3
-            # ④ 安全网 — V10-a 实测 dof_pos_limits 在触发 (-0.03~-0.11/ep)
+            # ⑤ 安全网 — 关节限位
             dof_pos_limits = -10.
-            # === V10-b 移除 (scale=0): ===
-            # stability — 0.45% 贡献, episode终止是最终约束
-            # collision — 0.01% 贡献, 身体碰撞几乎不发生
-            # dof_vel_limits — 2.5% 贡献, PD控制器物理限制速度
-            # dof_torque_limits — 0.3% 贡献, 电机硬限制力矩
-            stability = 0.0
+            # === 仍移除 (scale=0): ===
             collision = 0.0
             dof_vel_limits = 0.0
             dof_torque_limits = 0.0
