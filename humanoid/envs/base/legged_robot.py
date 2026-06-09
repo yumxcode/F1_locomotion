@@ -211,12 +211,16 @@ class LeggedRobot(BaseTask):
         
         pitch_th = getattr(self.cfg.safety, 'termination_pitch_threshold', 1.5)
         roll_th = getattr(self.cfg.safety, 'termination_roll_threshold', 1.5)
+        height_th = getattr(self.cfg.safety, 'termination_height_threshold', None)
         roll_cutoff = torch.abs(self.base_euler_xyz[:,0]) > roll_th
         pitch_cutoff = torch.abs(self.base_euler_xyz[:,1]) > pitch_th
 
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= roll_cutoff
         self.reset_buf |= pitch_cutoff
+        # V11: height termination — prevent "sit down and survive" exploit
+        if height_th is not None:
+            self.reset_buf |= (self.root_states[:, 2] < height_th)
 
     def reset_idx(self, env_ids):
         """ Reset some environments.

@@ -64,6 +64,10 @@ class X1DHStandCfg(LeggedRobotCfg):
         # BAD model hits 22.9° at t=0.23s vs body contact at t=0.35s (earlier termination)
         termination_pitch_threshold = 0.4  # rad (22.9°)
         termination_roll_threshold = 0.4   # rad (22.9°)
+        # V11: height termination — 堵死 "慢慢坐下存活" 漏洞
+        # GOOD walking z ∈ [0.59, 0.62], default z = 0.70
+        # 阈值 0.35m = GOOD 最低值 × 0.6, 足够余量
+        termination_height_threshold = 0.35  # m (低于此高度 terminate)
 
 
     class asset(LeggedRobotCfg.asset):
@@ -333,42 +337,42 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V10-d: 6 项 + 机械功率方案B
-            # 基于 V10-c 分析: 下落阶段 5 项 reward 梯度矩阵中
-            #   - tracking_lin_vel: 策略不可控 (空中无摩擦)
-            #   - tracking_ang_vel: 无梯度 (reward≈1.0)
-            #   - efficiency:       无方向 (好坏动作同样被惩罚)
-            #   - landing_impact:   不触发 (脚悬空 GRF=0)
-            #   - dof_pos_limits:   不触发 (关节远未到极限)
-            # → 策略在下落阶段输出随机 → 训练靠 domain rand 运气 → play 崩溃
+            # Reward V11: 堵漏洞 + 最小改动
+            # V10 问题诊断:
+            #   - 策略找到 "坐下存活" 漏洞 (无 height termination)
+            #   - 无 ref_joint_pos → 策略不知道怎么走 → 站着不动/坐下
+            #   - efficiency scale = -1e-3 太大 → 抑制任何大动作
+            #   - 训练时 mean reward 高是因为坐着不动的 env episode 长
             #
-            # 修复: 恢复 stability (姿态+高度)
-            #   - 下落阶段: height reward 暴跌 → 梯度推动"伸展膝盖准备落地"
-            #   - GOOD vs BAD 模型: 15步内累积差 2.10 (×1.5 scale)
-            #   - 全程覆盖: 下落+站立+行走, 不仅限于下落阶段
+            # V11 修复:
+            #   L1: 加 height termination (z < 0.35m → terminate)
+            #   L3: 恢复 ref_joint_pos (步态引导)
+            #   L4: efficiency scale -1e-3 → -1e-5 (保留 |τ·q̇| 但降低 100×)
+            #   恢复 V9 的 4 项步态 reward
             # =============================================================
             # ① 任务目标 — "往前走"
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 稳定性 — 姿态+高度 (V10-d 恢复)
+            # ② 步态引导 — 不衰减
+            ref_joint_pos = 1.0
+            feet_contact_number = 1.5
+            feet_clearance = 1.2
+            # ③ 稳定性
             stability = 1.5
-            # ③ 能效 — 机械功率 |τ·q̇|
-            efficiency = -1e-3
-            # ④ 疼痛 — GRF 项 (>300N 才惩罚)
+            # ④ 前进动力
+            swing_foot_forward = 2.0
+            # ⑤ 能效 — 机械功率 |τ·q̇| (V11: scale 降 100×)
+            efficiency = -1e-5
+            # ⑥ 脚底打滑
+            foot_slip = -0.5
+            # ⑦ 疼痛 — GRF 项
             landing_impact = -0.3
-            # ⑤ 安全网 — 关节限位
+            # ⑧ 安全网
             dof_pos_limits = -10.
-            # === 仍移除 (scale=0): ===
+            # === 移除 (scale=0): ===
             collision = 0.0
             dof_vel_limits = 0.0
             dof_torque_limits = 0.0
-            # === V10-a 移除 (scale=0): ===
-            # ref_joint_pos — 步态从物理涌现，不需参考轨迹
-            # feet_contact_number — 相位对齐是结果不是目标
-            # feet_clearance — 抬脚高度由能效自然决定
-            # swing_foot_forward — 已被 tracking_lin_vel 覆盖
-            # foot_slip — 滑动浪费能量，efficiency 自然惩罚
-            # landing_compliance — 屈曲吸收是 landing_impact 的最优解
 
     class normalization:
         class obs_scales:
