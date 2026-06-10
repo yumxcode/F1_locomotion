@@ -337,11 +337,14 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V13: 方案B相位对称性替代方案A镜像差值
+            # Reward V13: 方案B相位对称性 + 修复符号bug + 含膝辅助
             #
             # V13 vs V12:
-            #   symmetry: 方案A(镜像差值) → 方案B(相位一致×反相×幅度门控)
-            #   方案B关键改进: 站立不动 reward≈0.10 (方案A≈1.0的漏洞已堵)
+            #   symmetry: 方案A(镜像差值) → 方案B(相位绝对值比较)
+            #   1. 修复 phase_agree 符号反转 (正确行走≈0.27→0.90)
+            #   2. hip 70% + knee 30% (hip同号偏离, knee异号偏离,
+            #      用绝对值法统一处理)
+            #   3. 站立不动 reward≈0.10 (方案A≈1.0的漏洞已堵)
             #
             # 梯度优先级不变:
             #   前进(tracking) >> 对称性 ≈ 稳定性 >> landing ≈ efficiency

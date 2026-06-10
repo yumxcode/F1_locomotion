@@ -627,57 +627,76 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_symmetry(self):
         """
-        ② 对称性 — 基于相位的左右腿交替步态对称性 reward (V13 方案B)
+        ② 对称性 — 基于相位的左右腿交替步态对称性 reward (V13 方案B, 含膝辅助)
         
         设计原理:
         - 人类正常步态中, 左右腿是时间平移半个周期的交替运动
         - 利用已有 _get_phase() → sin_pos 相位信号来度量交替关系
-        - 与方案A(镜像差值)的关键区别: 
-          ① 用相位信号判断"当前哪条腿应该在前方"
-          ② 幅度门控: 不奖励站立不动 (方案A的漏洞)
-          ③ 反相惩罚: 不奖励双脚同时前伸(跳跃)
+        - 髋pitch为主(70%), 膝pitch为辅助(30%), 踝暂不参与
         
-        实现方式:
-        - sin_pos > 0 → 右腿应在前方 (rhp_dev > lhp_dev)
-        - sin_pos < 0 → 左腿应在前方 (lhp_dev > rhp_dev)
-        - 三项评分: 相位一致 × 反相对称 × 幅度门控
+        与方案A(镜像差值)的关键改进:
+          ① 用相位信号判断"当前哪条腿应该摆动" — 但不假设偏离方向(符号无关)
+          ② 幅度门控: 不奖励站立不动 (方案A的漏洞)
+          ③ 包含膝关节 — knee与hip偏离方向不同(hom同号,knee异号),
+             用绝对值比较法统一处理
+        
+        三项评分 (乘法门控):
+        1. phase_agree: 摆动腿的|偏离量| > 支撑腿的|偏离量| (符号无关)
+        2. anti_phase:  左右腿偏离方向应相反 (|left_dev + right_dev| ≈ 0)
+        3. amp_gate:   关节必须有足够运动幅度 (堵站立漏洞)
         
         量级校准 (scale=1.0):
-        - 正确交替步态: phase_agree≈0.85, anti_phase≈0.82, amp_gate≈1.0 → 0.73
-        - 站立不动: amp_gate≈0 → 0.10 (不奖励, 堵漏洞)
-        - 双腿同相跳跃: phase_agree≈0.50, anti_phase≈0.30 → 0.24 (惩罚)
-        - 错误相位: phase_agree≈0.15 → 0.14 (强惩罚)
+        - 正确交替步态: phase_agree≈0.90, anti_phase≈0.64, amp_gate≈0.82 → reward≈0.53
+        - 站立不动: amp_gate≈0 → reward≈0.10 (不奖励)
+        - 同相跳跃: phase_agree≈0.50, anti_phase≈0.45 → reward≈0.27 (惩罚)
+        - 错误相位: phase_agree≈0.12 → reward≈0.14 (强惩罚)
         """
         phase = self._get_phase()
         sin_pos = torch.sin(2 * torch.pi * phase)
         
-        # 左右髋pitch偏离默认位置
-        lhp_dev = self.dof_pos[:, 0] - self.default_dof_pos[:, 0]
-        rhp_dev = self.dof_pos[:, 6] - self.default_dof_pos[:, 6]
+        # 关节偏离默认位置
+        lhp_dev = self.dof_pos[:, 0] - self.default_dof_pos[:, 0]   # left hip pitch
+        rhp_dev = self.dof_pos[:, 6] - self.default_dof_pos[:, 6]   # right hip pitch
+        lkp_dev = self.dof_pos[:, 3] - self.default_dof_pos[:, 3]   # left knee pitch
+        rkp_dev = self.dof_pos[:, 9] - self.default_dof_pos[:, 9]   # right knee pitch
         
-        # === 1. 相位一致性: 哪条腿在前方应该与相位匹配 ===
-        # leg_diff > 0 = 右腿更前; sin_pos > 0 = 右腿应在前
-        # 乘积 > 0 = 正确交替
-        leg_diff = rhp_dev - lhp_dev
-        phase_product = leg_diff * sin_pos
-        # sigmoid: product=0→0.5, product=0.2→0.73, product=0.5→0.92
-        phase_agree = torch.sigmoid(phase_product * 5.0)
+        # 摆动相判定: sin > 0 → 右腿摆动, sin < 0 → 左腿摆动
+        # (与 _get_stance_mask 一致: sin>0 → 左脚stance/右脚swing)
+        is_right_swing = (sin_pos > 0).float()
         
-        # === 2. 反相对称: 两腿应该方向相反 ===
-        # lhp_dev ≈ -rhp_dev → |lhp_dev + rhp_dev| ≈ 0
-        anti_phase_error = torch.abs(lhp_dev + rhp_dev)
-        # σ=0.5: error=0→1.0, error=0.3→0.55, error=0.6→0.30
-        anti_phase = torch.exp(-anti_phase_error / 0.5)
+        # === 1. 相位一致性: 摆动腿的偏离量应 > 支撑腿 ===
+        # 使用绝对值比较, 完全不依赖关节方向符号
+        # hip 两腿摆动偏离同号(-0.25/-0.25), knee 异号(-0.35/+0.35)
+        # → 绝对值法统一处理两种情况
+        
+        # 髋pitch (主, 70%)
+        swing_hip = is_right_swing * torch.abs(rhp_dev) + (1 - is_right_swing) * torch.abs(lhp_dev)
+        stance_hip = is_right_swing * torch.abs(lhp_dev) + (1 - is_right_swing) * torch.abs(rhp_dev)
+        phase_agree_hip = torch.sigmoid((swing_hip - stance_hip) * 10.0)
+        
+        # 膝pitch (辅助, 30%)
+        swing_knee = is_right_swing * torch.abs(rkp_dev) + (1 - is_right_swing) * torch.abs(lkp_dev)
+        stance_knee = is_right_swing * torch.abs(lkp_dev) + (1 - is_right_swing) * torch.abs(rkp_dev)
+        phase_agree_knee = torch.sigmoid((swing_knee - stance_knee) * 10.0)
+        
+        phase_agree = 0.7 * phase_agree_hip + 0.3 * phase_agree_knee
+        
+        # === 2. 反相对称: 左右腿偏离方向应相反 ===
+        # 理想: left_dev ≈ -right_dev → |left + right| ≈ 0
+        anti_phase_hip = torch.exp(-torch.abs(lhp_dev + rhp_dev) / 0.5)
+        anti_phase_knee = torch.exp(-torch.abs(lkp_dev + rkp_dev) / 0.5)
+        anti_phase = 0.7 * anti_phase_hip + 0.3 * anti_phase_knee
         
         # === 3. 幅度门控: 不奖励站立不动 ===
-        amplitude = torch.abs(lhp_dev) + torch.abs(rhp_dev)
-        # amp=0→gate=0, amp=0.1→gate=0.39, amp=0.3→gate=0.78
+        # hip 全权重 + knee 半权重 (knee噪声较大,降低门控影响)
+        amplitude = (torch.abs(lhp_dev) + torch.abs(rhp_dev) +
+                     0.5 * (torch.abs(lkp_dev) + torch.abs(rkp_dev)))
         amp_gate = 1.0 - torch.exp(-amplitude / 0.2)
         
         # === 综合 ===
         symmetry = phase_agree * anti_phase * amp_gate
         
-        # 基线 0.1: 站立不动/无效步态的保底分, 避免完全零梯度
+        # 基线 0.1: 避免完全零梯度
         return 0.1 + 0.9 * symmetry
 
     def _reward_stability(self):
