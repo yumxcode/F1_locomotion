@@ -625,6 +625,53 @@ class X1DHStandEnv(LeggedRobot):
                         r)
         return r
 
+    def _reward_symmetry(self):
+        """
+        ② 对称性 — 左右腿镜像对称 reward
+        
+        设计原理:
+        - 人类正常步态中, 左右腿的运动轨迹是时间平移半个周期的镜像
+        - 对称性是步态质量的核心指标: 不对称步态 = 代偿 = 不稳定/低效
+        
+        实现方式:
+        - 计算左右腿关节偏离默认位置的量 (deviation)
+        - 髋关节 (hip_pitch/roll/yaw): 默认角度符号相反, 对称条件是 left_dev ≈ -right_dev
+        - 膝/踝关节 (knee/ankle): 默认角度相同, 对称条件是 left_dev ≈ right_dev
+        - 用加权绝对误差 → exp 转为 [0,1] reward
+        
+        量级校准:
+        - 对称走路: 加权误差 ≈ 0.5-1.0 → reward ≈ 0.37-0.61 (σ=1.0)
+        - 不对称: 加权误差 ≈ 2.0-5.0 → reward ≈ 0.01-0.14
+        - 站立不动: 误差≈0 → reward ≈ 1.0 (完全对称)
+        """
+        left = self.dof_pos[:, 0:6]    # [lhp, lhr, lhy, lkp, lap, lar]
+        right = self.dof_pos[:, 6:12]  # [rhp, rhr, rhy, rkp, rap, rar]
+        
+        left_default = self.default_dof_pos[:, 0:6]
+        right_default = self.default_dof_pos[:, 6:12]
+        
+        # 偏离默认的量
+        left_dev = left - left_default
+        right_dev = right - right_default
+        
+        # 镜像符号: 髋关节默认符号相反 → 对称条件 left_dev = -right_dev
+        #           膝/踝关节默认相同   → 对称条件 left_dev = +right_dev
+        # hip_pitch, hip_roll, hip_yaw: -1 (mirror)
+        # knee_pitch, ankle_pitch, ankle_roll: +1 (same)
+        mirror_sign = torch.tensor([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], device=self.device)
+        
+        # 对称误差: left_dev 应该 ≈ mirror_sign * right_dev
+        symmetry_error = left_dev - mirror_sign * right_dev
+        
+        # 加权绝对误差: hip_pitch 和 knee 是步态关键关节, 权重更高
+        weights = torch.tensor([2.0, 1.0, 0.5, 2.0, 1.0, 0.5], device=self.device)
+        weighted_error = torch.sum(torch.abs(symmetry_error) * weights, dim=1)
+        
+        # 高斯 reward: σ=1.0
+        # σ 选择: 误差1.0 → reward=0.37, 误差0.5 → reward=0.61
+        # 对称好步态给0.5+分, 不对称给0.1分, 有足够梯度区分
+        return torch.exp(-weighted_error / 1.0)
+
     def _reward_stability(self):
         """
         ② 稳定性 — V10: 精简为姿态 + 高度

@@ -330,35 +330,36 @@ class X1DHStandCfg(LeggedRobotCfg):
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
         only_positive_rewards = False
         # tracking reward = exp(-error/sigma)
-        tracking_sigma = 0.2  # V11-b: 0.08梯度消失→0.2平衡点 (站着64%,走路100%,差距+36%,初始有梯度)
+        tracking_sigma = 0.3  # V12: 0.2→0.3 增加容忍度, 给symmetry等新reward留梯度空间
         # V10: GRF 阈值降低到 300N (≈1.2× 体重), 对齐 Schumacher c_pain
         max_contact_force = 500  # V11-c: 300→500N (3.4×体重), 只惩罚极端冲击, 不与tracking冲突
         compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
         
         class scales:
             # ============================================================
-            # Reward V11: 大一统 + 堵漏洞
-            # 主线: 验证 "tracking + stability + efficiency + pain" 能否涌现步态
+            # Reward V12: 加入对称性 + 调整梯度优先级
             #
-            # V10 教训:
-            #   - efficiency scale -1e-3 太大 → 抑制所有动作 → 策略学不动
-            #   - 无 height termination → "坐下存活" 漏洞
-            #   - 不需要 ref_joint_pos 等 reward 补丁, 先堵 termination 漏洞再观察
+            # 用户指定梯度优先级:
+            #   前进(tracking) >> 对称性 ≈ 稳定性 >> landing ≈ efficiency
             #
-            # V11 只做 2 件事:
-            #   1. 加 height termination (z < 0.35m → terminate)
-            #   2. efficiency scale -1e-3 → -1e-5
+            # V12 改动:
+            #   1. 新增 symmetry reward (scale=1.0)
+            #   2. tracking_sigma 0.2→0.3 (增加容忍度)
+            #   3. stability 1.5→1.0 (与symmetry对齐)
+            #   4. efficiency -1e-5→-1e-4 (与landing同量级)
             # =============================================================
-            # ① 任务目标
+            # ① 任务目标 (最高梯度)
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 稳定性
-            stability = 1.5
-            # ③ 能效 — 机械功率 |τ·q̇| (V11: scale 降 100×)
-            efficiency = -1e-5
-            # ④ 疼痛 — GRF 项
+            # ② 对称性 — 左右腿镜像对称 (≈stability)
+            symmetry = 1.0
+            # ③ 稳定性 (≈symmetry)
+            stability = 1.0
+            # ④ 能效 — 机械功率 |τ·q̇| (≈landing)
+            efficiency = -1e-4
+            # ⑤ 疼痛 — GRF 项 (≈efficiency)
             landing_impact = -0.3
-            # ⑤ 安全网
+            # ⑥ 安全网
             dof_pos_limits = -10.
             # === 移除 (scale=0): ===
             collision = 0.0
