@@ -632,14 +632,16 @@ class X1DHStandEnv(LeggedRobot):
         摔倒 = episode终止，是最终保险；此处只提供保持直立/高度的梯度
         """
         # --- 躯干姿态 ---
-        orientation = torch.exp(-torch.norm(self.projected_gravity[:, :2], dim=1) * 20)
+        # V11-c: ×20→×10, pitch=3°时 raw从0.35→0.59, 给走路留梯度
+        orientation = torch.exp(-torch.norm(self.projected_gravity[:, :2], dim=1) * 10)
 
         # --- 质心高度稳定 ---
+        # V11-c: ×100→×10, Δh=2cm时 raw从0.14→0.82, 给走路留梯度
         stance_mask = self._get_stance_mask()
         measured_heights = torch.sum(
             self.rigid_state[:, self.feet_indices, 2] * stance_mask, dim=1) / torch.sum(stance_mask, dim=1)
         base_height = self.root_states[:, 2] - (measured_heights - self.cfg.rewards.feet_to_ankle_distance)
-        r_height = torch.exp(-torch.abs(base_height - self.cfg.rewards.base_height_target) * 100)
+        r_height = torch.exp(-torch.abs(base_height - self.cfg.rewards.base_height_target) * 10)
 
         return (orientation + r_height) / 2.
 

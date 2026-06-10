@@ -332,7 +332,7 @@ class X1DHStandCfg(LeggedRobotCfg):
         # tracking reward = exp(-error/sigma)
         tracking_sigma = 0.2  # V11-b: 0.08梯度消失→0.2平衡点 (站着64%,走路100%,差距+36%,初始有梯度)
         # V10: GRF 阈值降低到 300N (≈1.2× 体重), 对齐 Schumacher c_pain
-        max_contact_force = 300
+        max_contact_force = 500  # V11-c: 300→500N (3.4×体重), 只惩罚极端冲击, 不与tracking冲突
         compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
         
         class scales:
