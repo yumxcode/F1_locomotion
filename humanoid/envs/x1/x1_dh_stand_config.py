@@ -337,21 +337,19 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V12: 加入对称性 + 调整梯度优先级
+            # Reward V13: 方案B相位对称性替代方案A镜像差值
             #
-            # 用户指定梯度优先级:
+            # V13 vs V12:
+            #   symmetry: 方案A(镜像差值) → 方案B(相位一致×反相×幅度门控)
+            #   方案B关键改进: 站立不动 reward≈0.10 (方案A≈1.0的漏洞已堵)
+            #
+            # 梯度优先级不变:
             #   前进(tracking) >> 对称性 ≈ 稳定性 >> landing ≈ efficiency
-            #
-            # V12 改动:
-            #   1. 新增 symmetry reward (scale=1.0)
-            #   2. tracking_sigma 0.2→0.3 (增加容忍度)
-            #   3. stability 1.5→1.0 (与symmetry对齐)
-            #   4. efficiency -1e-5→-1e-4 (与landing同量级)
             # =============================================================
             # ① 任务目标 (最高梯度)
             tracking_lin_vel = 2.5
             tracking_ang_vel = 0.8
-            # ② 对称性 — 左右腿镜像对称 (≈stability)
+            # ② 对称性 — 基于相位的交替步态 (≈stability)
             symmetry = 1.0
             # ③ 稳定性 (≈symmetry)
             stability = 1.0

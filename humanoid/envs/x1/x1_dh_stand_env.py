@@ -627,50 +627,58 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_symmetry(self):
         """
-        ② 对称性 — 左右腿镜像对称 reward
+        ② 对称性 — 基于相位的左右腿交替步态对称性 reward (V13 方案B)
         
         设计原理:
-        - 人类正常步态中, 左右腿的运动轨迹是时间平移半个周期的镜像
-        - 对称性是步态质量的核心指标: 不对称步态 = 代偿 = 不稳定/低效
+        - 人类正常步态中, 左右腿是时间平移半个周期的交替运动
+        - 利用已有 _get_phase() → sin_pos 相位信号来度量交替关系
+        - 与方案A(镜像差值)的关键区别: 
+          ① 用相位信号判断"当前哪条腿应该在前方"
+          ② 幅度门控: 不奖励站立不动 (方案A的漏洞)
+          ③ 反相惩罚: 不奖励双脚同时前伸(跳跃)
         
         实现方式:
-        - 计算左右腿关节偏离默认位置的量 (deviation)
-        - 髋关节 (hip_pitch/roll/yaw): 默认角度符号相反, 对称条件是 left_dev ≈ -right_dev
-        - 膝/踝关节 (knee/ankle): 默认角度相同, 对称条件是 left_dev ≈ right_dev
-        - 用加权绝对误差 → exp 转为 [0,1] reward
+        - sin_pos > 0 → 右腿应在前方 (rhp_dev > lhp_dev)
+        - sin_pos < 0 → 左腿应在前方 (lhp_dev > rhp_dev)
+        - 三项评分: 相位一致 × 反相对称 × 幅度门控
         
-        量级校准:
-        - 对称走路: 加权误差 ≈ 0.5-1.0 → reward ≈ 0.37-0.61 (σ=1.0)
-        - 不对称: 加权误差 ≈ 2.0-5.0 → reward ≈ 0.01-0.14
-        - 站立不动: 误差≈0 → reward ≈ 1.0 (完全对称)
+        量级校准 (scale=1.0):
+        - 正确交替步态: phase_agree≈0.85, anti_phase≈0.82, amp_gate≈1.0 → 0.73
+        - 站立不动: amp_gate≈0 → 0.10 (不奖励, 堵漏洞)
+        - 双腿同相跳跃: phase_agree≈0.50, anti_phase≈0.30 → 0.24 (惩罚)
+        - 错误相位: phase_agree≈0.15 → 0.14 (强惩罚)
         """
-        left = self.dof_pos[:, 0:6]    # [lhp, lhr, lhy, lkp, lap, lar]
-        right = self.dof_pos[:, 6:12]  # [rhp, rhr, rhy, rkp, rap, rar]
+        phase = self._get_phase()
+        sin_pos = torch.sin(2 * torch.pi * phase)
         
-        left_default = self.default_dof_pos[:, 0:6]
-        right_default = self.default_dof_pos[:, 6:12]
+        # 左右髋pitch偏离默认位置
+        lhp_dev = self.dof_pos[:, 0] - self.default_dof_pos[:, 0]
+        rhp_dev = self.dof_pos[:, 6] - self.default_dof_pos[:, 6]
         
-        # 偏离默认的量
-        left_dev = left - left_default
-        right_dev = right - right_default
+        # === 1. 相位一致性: 哪条腿在前方应该与相位匹配 ===
+        # leg_diff > 0 = 右腿更前; sin_pos > 0 = 右腿应在前
+        # 乘积 > 0 = 正确交替
+        leg_diff = rhp_dev - lhp_dev
+        phase_product = leg_diff * sin_pos
+        # sigmoid: product=0→0.5, product=0.2→0.73, product=0.5→0.92
+        phase_agree = torch.sigmoid(phase_product * 5.0)
         
-        # 镜像符号: 髋关节默认符号相反 → 对称条件 left_dev = -right_dev
-        #           膝/踝关节默认相同   → 对称条件 left_dev = +right_dev
-        # hip_pitch, hip_roll, hip_yaw: -1 (mirror)
-        # knee_pitch, ankle_pitch, ankle_roll: +1 (same)
-        mirror_sign = torch.tensor([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], device=self.device)
+        # === 2. 反相对称: 两腿应该方向相反 ===
+        # lhp_dev ≈ -rhp_dev → |lhp_dev + rhp_dev| ≈ 0
+        anti_phase_error = torch.abs(lhp_dev + rhp_dev)
+        # σ=0.5: error=0→1.0, error=0.3→0.55, error=0.6→0.30
+        anti_phase = torch.exp(-anti_phase_error / 0.5)
         
-        # 对称误差: left_dev 应该 ≈ mirror_sign * right_dev
-        symmetry_error = left_dev - mirror_sign * right_dev
+        # === 3. 幅度门控: 不奖励站立不动 ===
+        amplitude = torch.abs(lhp_dev) + torch.abs(rhp_dev)
+        # amp=0→gate=0, amp=0.1→gate=0.39, amp=0.3→gate=0.78
+        amp_gate = 1.0 - torch.exp(-amplitude / 0.2)
         
-        # 加权绝对误差: hip_pitch 和 knee 是步态关键关节, 权重更高
-        weights = torch.tensor([2.0, 1.0, 0.5, 2.0, 1.0, 0.5], device=self.device)
-        weighted_error = torch.sum(torch.abs(symmetry_error) * weights, dim=1)
+        # === 综合 ===
+        symmetry = phase_agree * anti_phase * amp_gate
         
-        # 高斯 reward: σ=1.0
-        # σ 选择: 误差1.0 → reward=0.37, 误差0.5 → reward=0.61
-        # 对称好步态给0.5+分, 不对称给0.1分, 有足够梯度区分
-        return torch.exp(-weighted_error / 1.0)
+        # 基线 0.1: 站立不动/无效步态的保底分, 避免完全零梯度
+        return 0.1 + 0.9 * symmetry
 
     def _reward_stability(self):
         """
