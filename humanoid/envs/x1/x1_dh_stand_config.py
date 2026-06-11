@@ -337,20 +337,20 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V15: 相位调制能量对称性
+            # Reward V16: 镜像对称 Morphological Symmetry
             #
-            # V15 vs V14 核心: 用 x²·sin(phase) 替代 |x|+hard_mask
-            #   asymmetry = (r_energy - l_energy) × sin(phase)
-            #   正确交替 → asymmetry > 0 → 高 reward
+            # V16 vs V15 根因修复:
+            #   V15 (energy-phase): 只检查能量平衡, split stance 得 0.876 (高分!)
+            #   V16 (mirror): 检查 l_dev+r_dev≈0, split stance 得 0.024 (低分!)
+            #   区分度: 40×
             #
-            # 梯度改进:
-            #   1. x² 替代 |x| → 梯度=2x (平滑), 非 sign(x) (跳变)
-            #   2. sin(phase) 替代 hard mask → 过渡处自然衰减
-            #   3. tanh 替代 sigmoid(×15) → 线性区保持梯度
-            #   4. 梯度按偏差大小分配: 大偏差关节修正梯度更大
+            # 公式: mirror_err = Σ w_j × (l_dev_j + r_dev_j)²
+            #       reward = exp(-mirror_err / 0.5)
             #
-            # 梯度优先级:
-            #   前进(tracking) >> 对称性 ≈ 稳定性 >> landing ≈ efficiency
+            # 梯度: ∇_l = 2w(l+r)/sigma → 直接推向 l=-r (镜像对称)
+            #
+            # 权重: HP=1.0, KP=0.8, AP=0.3, HR/HY/AR=0.2
+            # sigma=0.5: split=0.024, ideal=0.987, standing=1.0
             # =============================================================
             # ① 任务目标 (最高梯度)
             tracking_lin_vel = 2.5
