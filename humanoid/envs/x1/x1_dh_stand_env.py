@@ -627,70 +627,57 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_symmetry(self):
         """
-        ② 对称性 — 基于相位的左右腿交替步态对称性 reward (V14)
+        ② 对称性 — 相位调制能量对称性 (V15)
         
-        V14 vs V13 关键修正 — 基于真实步态数据分析:
+        核心公式: asymmetry = (right_energy - left_energy) × sin(phase)
         
-        数据发现 (gait_20260608_084521.csv, vx>0.3m/s 区间):
-        1. 支撑腿 hip_pitch 不是不动的! 支撑相内 dev 从 +0.10→+0.27→-0.05 (幅度0.31 rad)
-           物理原因: 身体重心前移过支撑脚 → 髋从后仰变前倾
-        2. 两腿 hip_pitch dev 经常同号! 因为左右髋轴方向相同(URDF: 0,0,1)
-           身体前移时两腿同方向旋转, 这是正确的物理行为
-        3. 摆动/支撑 |dev| 峰值比 ≈ 1.4x (0.39/0.27), 不是远大于
+        物理含义:
+        - sin > 0 (右摆动): 右腿应做更多功 → r_energy > l_energy → asymmetry > 0 ✓
+        - sin < 0 (左摆动): 左腿应做更多功 → l_energy > r_energy → asymmetry < 0,
+          但 (r-l)×sin = (负)×(负) = 正 ✓
+        - sin ≈ 0 (相位过渡): asymmetry ≈ 0 → 不强制 → 无过渡惩罚 ✓
         
-        V13 的错误:
-        - anti_phase 维度 (|left_dev + right_dev| ≈ 0) 完全错误
-          两腿同号是正确行为, anti_phase 在正确步态时≈0.4, 严重拖累reward
-        - phase_agree 陡度 x10 在 1.4x 比值时区分力不足
+        V15 vs V14 梯度改进:
+        1. x² 替代 |x| — 梯度=2x (平滑自归一化), 替代 sign(x) (x≈0跳变)
+        2. sin(phase) 替代 hard mask — 过渡处自然衰减, 无惩罚谷
+        3. tanh 替代 sigmoid(×15) — 线性区梯度保持, 非急剧饱和
         
-        V14 修正:
-        - 移除 anti_phase (两腿同号 ≠ 不对称)
-        - phase_agree 陡度 x10 → x15 (1.4x比值 → sigmoid(6)=0.997)
-        - 保留 amp_gate (不奖励站立不动)
+        V15 梯度优势:
+        - 梯度与偏差大小成正比: 大偏差关节的修正梯度更大 (V14 所有关节相同)
+        - 相位过渡处不惩罚: sin≈0 → reward≈0.5 (中性), V14 硬掩码翻转惩罚
         
-        量级校准 (基于真实数据反向计算, scale=1.0):
-        - 正确交替步态: phase_agree≈0.90, amp_gate≈0.82 → reward≈0.76
-        - 站立不动: amp_gate≈0 → reward≈0.10 (不奖励)
-        - 同相跳跃: phase_agree≈0.50 → reward≈0.35 (惩罚)
+        量级校准 (基于真实数据, scale=1.0):
+        - 正确交替: phase_agree≈0.93, amp_gate≈0.96 → reward≈0.90
+        - 站立不动: amp_gate≈0.02 → reward≈0.10
+        - 反相错误: phase_agree≈0.07 → reward≈0.16
         """
         phase = self._get_phase()
         sin_pos = torch.sin(2 * torch.pi * phase)
         
         # 关节偏离默认位置
-        lhp_dev = self.dof_pos[:, 0] - self.default_dof_pos[:, 0]   # left hip pitch
-        rhp_dev = self.dof_pos[:, 6] - self.default_dof_pos[:, 6]   # right hip pitch
-        lkp_dev = self.dof_pos[:, 3] - self.default_dof_pos[:, 3]   # left knee pitch
-        rkp_dev = self.dof_pos[:, 9] - self.default_dof_pos[:, 9]   # right knee pitch
+        lhp = self.dof_pos[:, 0] - self.default_dof_pos[:, 0]   # left hip pitch
+        rhp = self.dof_pos[:, 6] - self.default_dof_pos[:, 6]   # right hip pitch
+        lkp = self.dof_pos[:, 3] - self.default_dof_pos[:, 3]   # left knee pitch
+        rkp = self.dof_pos[:, 9] - self.default_dof_pos[:, 9]   # right knee pitch
         
-        # 摆动相判定: sin > 0 → 右腿摆动, sin < 0 → 左腿摆动
-        is_right_swing = (sin_pos > 0).float()
+        # 每条腿的"能量" — x² 处处可微, 梯度=2x 自归一化
+        # 髋为主关节 (×1.0), 膝辅助 (×0.5)
+        l_energy = lhp ** 2 + 0.5 * lkp ** 2
+        r_energy = rhp ** 2 + 0.5 * rkp ** 2
         
-        # === 1. 相位一致性: 摆动腿的|偏离量| > 支撑腿的|偏离量| ===
-        # 绝对值比较, 不依赖关节方向符号
-        # V14: sigmoid 陡度 x15 (原 x10), 适配 1.4x 实际比值
+        # 相位调制不对称性 — 核心公式
+        # 正确交替 → asymmetry > 0 → 高 reward
+        # 反相错误 → asymmetry < 0 → 低 reward
+        asymmetry = (r_energy - l_energy) * sin_pos
         
-        # 髋pitch (主, 70%)
-        swing_hip = is_right_swing * torch.abs(rhp_dev) + (1 - is_right_swing) * torch.abs(lhp_dev)
-        stance_hip = is_right_swing * torch.abs(lhp_dev) + (1 - is_right_swing) * torch.abs(rhp_dev)
-        phase_agree_hip = torch.sigmoid((swing_hip - stance_hip) * 15.0)
+        # tanh 映射到 [0, 1]: scale 0.05 使典型步态偏差(0.05~0.1)落在线性区
+        phase_agree = 0.5 + 0.5 * torch.tanh(asymmetry / 0.05)
         
-        # 膝pitch (辅助, 30%)
-        swing_knee = is_right_swing * torch.abs(rkp_dev) + (1 - is_right_swing) * torch.abs(lkp_dev)
-        stance_knee = is_right_swing * torch.abs(lkp_dev) + (1 - is_right_swing) * torch.abs(rkp_dev)
-        phase_agree_knee = torch.sigmoid((swing_knee - stance_knee) * 15.0)
+        # 幅度门控: tanh 比 exp 更稳定, 站立时 energy≈0 → gate≈0
+        amp_gate = torch.tanh((l_energy + r_energy) / 0.05)
         
-        phase_agree = 0.7 * phase_agree_hip + 0.3 * phase_agree_knee
-        
-        # === 2. 幅度门控: 不奖励站立不动 ===
-        amplitude = (torch.abs(lhp_dev) + torch.abs(rhp_dev) +
-                     0.5 * (torch.abs(lkp_dev) + torch.abs(rkp_dev)))
-        amp_gate = 1.0 - torch.exp(-amplitude / 0.2)
-        
-        # === 综合: phase_agree × amp_gate (移除 anti_phase) ===
-        symmetry = phase_agree * amp_gate
-        
-        # 基线 0.1: 避免完全零梯度
-        return 0.1 + 0.9 * symmetry
+        # 基线 0.1: 站立时不完全零梯度
+        return 0.1 + 0.9 * phase_agree * amp_gate
 
     def _reward_stability(self):
         """

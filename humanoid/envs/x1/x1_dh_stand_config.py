@@ -337,21 +337,19 @@ class X1DHStandCfg(LeggedRobotCfg):
         
         class scales:
             # ============================================================
-            # Reward V14: 修正对称性建模 — 基于真实步态数据分析
+            # Reward V15: 相位调制能量对称性
             #
-            # V14 vs V13 关键修正:
-            #   1. 移除 anti_phase 维度 — 数据证明两腿 hip_pitch dev
-            #      经常同号(身体前移→两腿同方向旋转), 是正确物理行为
-            #      anti_phase 在正确步态时≈0.4, 严重误惩罚
-            #   2. phase_agree sigmoid 陡度 x10→x15 — 适配实际
-            #      摆动/支撑 |dev| 峰值比 1.4x (0.39/0.27)
-            #   3. 保留 amp_gate (不奖励站立不动)
+            # V15 vs V14 核心: 用 x²·sin(phase) 替代 |x|+hard_mask
+            #   asymmetry = (r_energy - l_energy) × sin(phase)
+            #   正确交替 → asymmetry > 0 → 高 reward
             #
-            # 数据来源: gait_20260608_084521.csv, vx>0.3m/s
-            #   支撑腿 hip_pitch dev: +0.10→+0.27→-0.05 (幅度0.31 rad)
-            #   新 reward 均值: 0.614 (旧 0.381, +0.233)
+            # 梯度改进:
+            #   1. x² 替代 |x| → 梯度=2x (平滑), 非 sign(x) (跳变)
+            #   2. sin(phase) 替代 hard mask → 过渡处自然衰减
+            #   3. tanh 替代 sigmoid(×15) → 线性区保持梯度
+            #   4. 梯度按偏差大小分配: 大偏差关节修正梯度更大
             #
-            # 梯度优先级不变:
+            # 梯度优先级:
             #   前进(tracking) >> 对称性 ≈ 稳定性 >> landing ≈ efficiency
             # =============================================================
             # ① 任务目标 (最高梯度)
