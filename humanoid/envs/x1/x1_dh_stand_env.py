@@ -627,29 +627,31 @@ class X1DHStandEnv(LeggedRobot):
 
     def _reward_symmetry(self):
         """
-        ② 对称性 — 基于相位的左右腿交替步态对称性 reward (V13 方案B, 含膝辅助)
+        ② 对称性 — 基于相位的左右腿交替步态对称性 reward (V14)
         
-        设计原理:
-        - 人类正常步态中, 左右腿是时间平移半个周期的交替运动
-        - 利用已有 _get_phase() → sin_pos 相位信号来度量交替关系
-        - 髋pitch为主(70%), 膝pitch为辅助(30%), 踝暂不参与
+        V14 vs V13 关键修正 — 基于真实步态数据分析:
         
-        与方案A(镜像差值)的关键改进:
-          ① 用相位信号判断"当前哪条腿应该摆动" — 但不假设偏离方向(符号无关)
-          ② 幅度门控: 不奖励站立不动 (方案A的漏洞)
-          ③ 包含膝关节 — knee与hip偏离方向不同(hom同号,knee异号),
-             用绝对值比较法统一处理
+        数据发现 (gait_20260608_084521.csv, vx>0.3m/s 区间):
+        1. 支撑腿 hip_pitch 不是不动的! 支撑相内 dev 从 +0.10→+0.27→-0.05 (幅度0.31 rad)
+           物理原因: 身体重心前移过支撑脚 → 髋从后仰变前倾
+        2. 两腿 hip_pitch dev 经常同号! 因为左右髋轴方向相同(URDF: 0,0,1)
+           身体前移时两腿同方向旋转, 这是正确的物理行为
+        3. 摆动/支撑 |dev| 峰值比 ≈ 1.4x (0.39/0.27), 不是远大于
         
-        三项评分 (乘法门控):
-        1. phase_agree: 摆动腿的|偏离量| > 支撑腿的|偏离量| (符号无关)
-        2. anti_phase:  左右腿偏离方向应相反 (|left_dev + right_dev| ≈ 0)
-        3. amp_gate:   关节必须有足够运动幅度 (堵站立漏洞)
+        V13 的错误:
+        - anti_phase 维度 (|left_dev + right_dev| ≈ 0) 完全错误
+          两腿同号是正确行为, anti_phase 在正确步态时≈0.4, 严重拖累reward
+        - phase_agree 陡度 x10 在 1.4x 比值时区分力不足
         
-        量级校准 (scale=1.0):
-        - 正确交替步态: phase_agree≈0.90, anti_phase≈0.64, amp_gate≈0.82 → reward≈0.53
+        V14 修正:
+        - 移除 anti_phase (两腿同号 ≠ 不对称)
+        - phase_agree 陡度 x10 → x15 (1.4x比值 → sigmoid(6)=0.997)
+        - 保留 amp_gate (不奖励站立不动)
+        
+        量级校准 (基于真实数据反向计算, scale=1.0):
+        - 正确交替步态: phase_agree≈0.90, amp_gate≈0.82 → reward≈0.76
         - 站立不动: amp_gate≈0 → reward≈0.10 (不奖励)
-        - 同相跳跃: phase_agree≈0.50, anti_phase≈0.45 → reward≈0.27 (惩罚)
-        - 错误相位: phase_agree≈0.12 → reward≈0.14 (强惩罚)
+        - 同相跳跃: phase_agree≈0.50 → reward≈0.35 (惩罚)
         """
         phase = self._get_phase()
         sin_pos = torch.sin(2 * torch.pi * phase)
@@ -661,40 +663,31 @@ class X1DHStandEnv(LeggedRobot):
         rkp_dev = self.dof_pos[:, 9] - self.default_dof_pos[:, 9]   # right knee pitch
         
         # 摆动相判定: sin > 0 → 右腿摆动, sin < 0 → 左腿摆动
-        # (与 _get_stance_mask 一致: sin>0 → 左脚stance/右脚swing)
         is_right_swing = (sin_pos > 0).float()
         
-        # === 1. 相位一致性: 摆动腿的偏离量应 > 支撑腿 ===
-        # 使用绝对值比较, 完全不依赖关节方向符号
-        # hip 两腿摆动偏离同号(-0.25/-0.25), knee 异号(-0.35/+0.35)
-        # → 绝对值法统一处理两种情况
+        # === 1. 相位一致性: 摆动腿的|偏离量| > 支撑腿的|偏离量| ===
+        # 绝对值比较, 不依赖关节方向符号
+        # V14: sigmoid 陡度 x15 (原 x10), 适配 1.4x 实际比值
         
         # 髋pitch (主, 70%)
         swing_hip = is_right_swing * torch.abs(rhp_dev) + (1 - is_right_swing) * torch.abs(lhp_dev)
         stance_hip = is_right_swing * torch.abs(lhp_dev) + (1 - is_right_swing) * torch.abs(rhp_dev)
-        phase_agree_hip = torch.sigmoid((swing_hip - stance_hip) * 10.0)
+        phase_agree_hip = torch.sigmoid((swing_hip - stance_hip) * 15.0)
         
         # 膝pitch (辅助, 30%)
         swing_knee = is_right_swing * torch.abs(rkp_dev) + (1 - is_right_swing) * torch.abs(lkp_dev)
         stance_knee = is_right_swing * torch.abs(lkp_dev) + (1 - is_right_swing) * torch.abs(rkp_dev)
-        phase_agree_knee = torch.sigmoid((swing_knee - stance_knee) * 10.0)
+        phase_agree_knee = torch.sigmoid((swing_knee - stance_knee) * 15.0)
         
         phase_agree = 0.7 * phase_agree_hip + 0.3 * phase_agree_knee
         
-        # === 2. 反相对称: 左右腿偏离方向应相反 ===
-        # 理想: left_dev ≈ -right_dev → |left + right| ≈ 0
-        anti_phase_hip = torch.exp(-torch.abs(lhp_dev + rhp_dev) / 0.5)
-        anti_phase_knee = torch.exp(-torch.abs(lkp_dev + rkp_dev) / 0.5)
-        anti_phase = 0.7 * anti_phase_hip + 0.3 * anti_phase_knee
-        
-        # === 3. 幅度门控: 不奖励站立不动 ===
-        # hip 全权重 + knee 半权重 (knee噪声较大,降低门控影响)
+        # === 2. 幅度门控: 不奖励站立不动 ===
         amplitude = (torch.abs(lhp_dev) + torch.abs(rhp_dev) +
                      0.5 * (torch.abs(lkp_dev) + torch.abs(rkp_dev)))
         amp_gate = 1.0 - torch.exp(-amplitude / 0.2)
         
-        # === 综合 ===
-        symmetry = phase_agree * anti_phase * amp_gate
+        # === 综合: phase_agree × amp_gate (移除 anti_phase) ===
+        symmetry = phase_agree * amp_gate
         
         # 基线 0.1: 避免完全零梯度
         return 0.1 + 0.9 * symmetry
