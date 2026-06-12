@@ -115,6 +115,11 @@ class X1DHStandEnv(LeggedRobot):
         self.last_feet_z = self.cfg.rewards.feet_to_ankle_distance
         self.feet_height = torch.zeros((self.num_envs, 2), device=self.device)
         self.ref_dof_pos = torch.zeros((self.num_envs, self.num_actions), device=self.device)      
+        # V13: single_foot_contact 历史缓冲 (0.2s / dt 帧 @50Hz = 10 帧)
+        grace_frames = int(self.cfg.rewards.single_contact_grace / self.dt)
+        self.single_contact_history = torch.zeros((self.num_envs, grace_frames), device=self.device)
+        # V13: feet_airtime 需要的接触缓冲 (独立于旧 _reward_feet_air_time)
+        self.airtime_contact_prev = torch.zeros((self.num_envs, 2), dtype=torch.bool, device=self.device)
 
 
     def _push_robots(self):
@@ -533,6 +538,9 @@ class X1DHStandEnv(LeggedRobot):
         self.episode_length_buf[env_ids] = 0
         self.phase_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
+        # V13: 重置 single_foot_contact 历史和 airtime 接触缓冲
+        self.single_contact_history[env_ids] = 0.
+        self.airtime_contact_prev[env_ids] = False
         # rand 0 or 0.5
         self.gait_start[env_ids] = torch.randint(0, 2, (len(env_ids),)).to(self.device)*0.5
         
@@ -585,16 +593,27 @@ class X1DHStandEnv(LeggedRobot):
 
 # ================================================ Rewards ================================================== #
     # ============================================================
-    # 精简 Reward 设计 (29→10)
-    # ① velocity_tracking — 合并 tracking_lin/ang_vel, vel_mismatch, low_speed, track_vel_hard, stand_still
-    # ② stability        — 合并 orientation, base_height, base_acc, default_joint_pos, feet_rotation
-    # ③ efficiency        — 合并 torques, dof_vel, dof_acc, action_smoothness, feet_contact_forces
-    # ④ ref_joint_pos     — 保留，步态轨迹引导
-    # ⑤ feet_contact_number — 保留，步态相位核心
-    # ⑥ feet_clearance    — 保留，抬脚高度
-    # ⑦ foot_slip         — 保留，脚底打滑
-    # ⑧ collision         — 保留，安全硬约束
-    # ⑨ safety_limits     — 合并 dof_pos/vel/torque_limits
+    # V13: "Minimal Emergence" — 最小涌现设计
+    #
+    # 核心发现 (van Marum 2024):
+    #   tracking + orientation → 只产生跳跃
+    #   + single_foot_contact → 产生行走 (步态涌现!)
+    #
+    # 保留项 (V12→V13):
+    #   ① tracking_lin_vel (scale 2.5→1.0)
+    #   ② tracking_ang_vel (scale 0.8→0.5)
+    #   ③ dof_pos_limits (不变)
+    #
+    # 新增项 (V13):
+    #   ④ single_foot_contact (scale 0.3) — 步态涌现核心
+    #   ⑤ feet_airtime (scale 0.3) — 步频正则化
+    #   ⑥ orientation (scale 0.5) — 从 stability 拆出
+    #   ⑦ base_height (scale 0.2) — 从 stability 拆出
+    #   ⑧ torque (scale 0.01) — 温和力矩正则化
+    #
+    # 移除项 (scale=0):
+    #   symmetry, stability, efficiency, landing_impact
+    #   及所有步态工程化 reward
     # ============================================================
 
     def _reward_tracking_lin_vel(self):
@@ -848,6 +867,128 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_termination(self):
         # Terminal reward / penalty
         return self.reset_buf * ~self.time_out_buf
+
+    # ============================================================
+    # V13: "Minimal Emergence" 新增 Reward
+    # 基于 van Marum 2024 的最小约束设计
+    # ============================================================
+
+    def _reward_single_foot_contact(self):
+        """
+        ⭐ V13 核心新增 — 单脚接触奖励 (van Marum 2024 的关键发现)
+        
+        核心思想:
+        - 跳跃 = 双脚同时离地 → n_contact ≠ 1 → r = 0
+        - 行走 = 交替单脚接触 → n_contact = 1 → r = 1
+        - 站立命令 → r = 1 (不给偏好, 不阻碍恢复步)
+        
+        宽限期 0.2s: 在 [t-0.2s, t] 内任一时刻有单脚接触 → r = 1
+        允许双支撑阶段, 不要求完美交替
+        
+        参考: van Marum et al. "Revisiting Reward Design..." (2024)
+        他们发现 tracking + orientation 只能产生跳跃, 加上此项即产生行走
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.0  # [N, 2]
+        n_contact = torch.sum(contact.float(), dim=1)  # [N]
+        
+        stand_cmd = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
+        
+        # 当前帧单脚接触
+        single_now = (n_contact == 1)
+        
+        # 宽限期: 最近 0.2s 内是否有单脚接触
+        single_grace = torch.max(self.single_contact_history, dim=1).values > 0.5  # [N]
+        
+        # 行走命令时: 单脚接触 or 宽限期内曾单脚接触 → r=1, 否则 → r=0
+        r = torch.where(stand_cmd,
+                        torch.ones(self.num_envs, device=self.device),
+                        torch.where(single_now | single_grace,
+                                   torch.ones(self.num_envs, device=self.device),
+                                   torch.zeros(self.num_envs, device=self.device)))
+        
+        # 更新历史 (滚动窗口)
+        self.single_contact_history = torch.roll(self.single_contact_history, -1, dims=1)
+        self.single_contact_history[:, -1] = single_now.float()
+        
+        return r
+
+    def _reward_feet_airtime(self):
+        """
+        ⭐ V13 核心新增 — 空中时间步频正则化 (van Marum 2024)
+        
+        公式: Σ_f (t_air,f - threshold) · 1_touchdown,f
+        - 空中时间 > 0.4s → 正奖励 → 鼓励充分抬脚
+        - 空中时间 < 0.4s → 负奖励 → 惩罚过快步频
+        - 站立命令 → r = 1.0
+        
+        只在落地瞬间触发 (稀疏), 但梯度很强
+        正则化步频: 没有此奖励, 策略倾向过快步频 (局部最优)
+        """
+        stand_cmd = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.0  # [N, 2]
+        
+        # 检测刚落地: 当前接触 & 上一帧不接触
+        first_contact = contact & ~self.airtime_contact_prev  # [N, 2]
+        
+        # 累积空中时间
+        self.feet_air_time += self.dt
+        
+        # 落地时计算奖励: (air_time - threshold) * 1_touchdown
+        threshold = self.cfg.rewards.airtime_threshold  # 0.4s
+        air_rew = torch.sum(
+            torch.clamp(self.feet_air_time - threshold, min=-threshold) * first_contact.float(),
+            dim=1
+        )
+        
+        # 接触时重置 air_time
+        self.feet_air_time *= ~contact
+        
+        # 保存接触状态
+        self.airtime_contact_prev = contact.clone()
+        
+        # 站立命令: 常量 1.0
+        r = torch.where(stand_cmd,
+                        torch.ones(self.num_envs, device=self.device),
+                        air_rew)
+        return r
+
+    def _reward_orientation(self):
+        """
+        ⭐ V13 新增 — 躯干姿态 (从 V12 stability 拆出)
+        
+        exp(-||projected_gravity_xy|| × 10)
+        - 直立时 g_xy ≈ 0, reward ≈ 1.0
+        - 倾斜 5° 时 g_xy ≈ 0.087, reward ≈ 0.42
+        - 倾斜 10° 时 g_xy ≈ 0.17, reward ≈ 0.18
+        """
+        return torch.exp(-torch.norm(self.projected_gravity[:, :2], dim=1) * 10)
+
+    def _reward_base_height(self):
+        """
+        ⭐ V13 新增 — 质心高度稳定 (从 V12 stability 拆出)
+        
+        exp(-|h - target| × 10)
+        - 维持期望站高 0.61m
+        - Δh = 2cm 时 reward ≈ 0.82
+        - Δh = 5cm 时 reward ≈ 0.61
+        """
+        stance_mask = self._get_stance_mask()
+        measured_heights = torch.sum(
+            self.rigid_state[:, self.feet_indices, 2] * stance_mask, dim=1) / torch.clamp(torch.sum(stance_mask, dim=1), min=1.0)
+        base_height = self.root_states[:, 2] - (measured_heights - self.cfg.rewards.feet_to_ankle_distance)
+        return torch.exp(-torch.abs(base_height - self.cfg.rewards.base_height_target) * 10)
+
+    def _reward_torque(self):
+        """
+        ⭐ V13 新增 — 温和力矩正则化 (van Marum 用 weight=0.01)
+        
+        exp(-Σ|τ| / 100)
+        - 归一化因子 100 使 reward 在合理范围内
+        - 站立时 τ ≈ 20-40Nm per joint, Σ|τ| ≈ 240-480
+        - exp(-300/100) ≈ 0.050 → ×0.01 scale = 0.0005 (微弱信号)
+        - 走路时 τ 更大, reward 更低 → 温和倾向减少力矩
+        """
+        return torch.exp(-torch.sum(torch.abs(self.torques), dim=1) / 100.0)
 
     def update_command_curriculum(self, env_ids):
         """

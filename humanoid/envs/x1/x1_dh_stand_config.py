@@ -330,42 +330,50 @@ class X1DHStandCfg(LeggedRobotCfg):
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
         only_positive_rewards = False
         # tracking reward = exp(-error/sigma)
-        tracking_sigma = 0.3  # V12: 0.2→0.3 增加容忍度, 给symmetry等新reward留梯度空间
+        tracking_sigma = 0.25  # V13: 0.3→0.25 (van Marum σ=5 等效约 0.2, Berkeley σ=0.2)
         # V10: GRF 阈值降低到 300N (≈1.2× 体重), 对齐 Schumacher c_pain
         max_contact_force = 500  # V11-c: 300→500N (3.4×体重), 只惩罚极端冲击, 不与tracking冲突
         compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
+        # V13: single_foot_contact 宽限期 (秒), van Marum 用 0.2s
+        single_contact_grace = 0.2
+        # V13: feet_airtime 最低空中时间阈值 (秒), van Marum 用 0.4s
+        airtime_threshold = 0.4
         
         class scales:
             # ============================================================
-            # Reward V16: 镜像对称 Morphological Symmetry
+            # Reward V13: "Minimal Emergence" — 最小涌现
             #
-            # V16 vs V15 根因修复:
-            #   V15 (energy-phase): 只检查能量平衡, split stance 得 0.876 (高分!)
-            #   V16 (mirror): 检查 l_dev+r_dev≈0, split stance 得 0.024 (低分!)
-            #   区分度: 40×
+            # 设计哲学: 基于 van Marum (OSU/Digit 2024) 的最小约束奖励
+            # 核心发现: 仅 tracking + orientation → 跳跃
+            #           + single_foot_contact → 行走 (步态涌现!)
             #
-            # 公式: mirror_err = Σ w_j × (l_dev_j + r_dev_j)²
-            #       reward = exp(-mirror_err / 0.5)
+            # 移除所有工程化步态 reward (symmetry, ref_joint_pos, 
+            # feet_contact_number, feet_clearance, swing_foot_forward, 
+            # efficiency, landing_impact) — 它们互相竞争梯度
             #
-            # 梯度: ∇_l = 2w(l+r)/sigma → 直接推向 l=-r (镜像对称)
-            #
-            # 权重: HP=1.0, KP=0.8, AP=0.3, HR/HY/AR=0.2
-            # sigma=0.5: split=0.024, ideal=0.987, standing=1.0
+            # 参考论文: "Revisiting Reward Design and Evaluation for 
+            # Robust Humanoid Standing and Walking" (van Marum 2024)
             # =============================================================
-            # ① 任务目标 (最高梯度)
-            tracking_lin_vel = 2.5
-            tracking_ang_vel = 0.8
-            # ② 对称性 — 基于相位的交替步态 (≈stability)
-            symmetry = 1.0
-            # ③ 稳定性 (≈symmetry)
-            stability = 1.0
-            # ④ 能效 — 机械功率 |τ·q̇| (≈landing)
-            efficiency = -1e-4
-            # ⑤ 疼痛 — GRF 项 (≈efficiency)
-            landing_impact = -0.3
-            # ⑥ 安全网
+            # ① 任务目标
+            tracking_lin_vel = 1.0    # V12: 2.5→1.0, 降低梯度压制
+            tracking_ang_vel = 0.5    # V12: 0.8→0.5
+            # ② 行走涌现 — 单脚接触 (van Marum 的关键发现)
+            single_foot_contact = 0.3 # ⭐ 新增: 从跳跃到行走的决定性 reward
+            # ③ 步频正则化 — 空中时间 (van Marum 公式)
+            feet_airtime = 0.3        # ⭐ 新增: (t_air - 0.4)·1_td
+            # ④ 躯干姿态
+            orientation = 0.5         # ⭐ 新增: 从 stability 拆出, exp(-||g_xy||×10)
+            # ⑤ 质心高度
+            base_height = 0.2         # ⭐ 新增: 从 stability 拆出, exp(-|h-0.61|×10)
+            # ⑥ 温和力矩正则化
+            torque = 0.01             # ⭐ 新增: exp(-Σ|τ|/100), van Marum 权重 0.01
+            # ⑦ 安全网
             dof_pos_limits = -10.
-            # === 移除 (scale=0): ===
+            # === V12 遗留 (scale=0, 函数体保留): ===
+            symmetry = 0.0
+            stability = 0.0
+            efficiency = 0.0
+            landing_impact = 0.0
             collision = 0.0
             dof_vel_limits = 0.0
             dof_torque_limits = 0.0
