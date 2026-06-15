@@ -355,10 +355,10 @@ class X1DHStandCfg(LeggedRobotCfg):
             # Robust Humanoid Standing and Walking" (van Marum 2024)
             # =============================================================
             # ① 任务目标
-            tracking_lin_vel = 1.0    # V12: 2.5→1.0, 降低梯度压制
+            tracking_lin_vel = 0.5    # V13b: 1.0→0.5, 释放梯度空间给 SFC
             tracking_ang_vel = 0.5    # V12: 0.8→0.5
             # ② 行走涌现 — 单脚接触 (van Marum 的关键发现)
-            single_foot_contact = 0.3 # ⭐ 新增: 从跳跃到行走的决定性 reward
+            single_foot_contact = 1.0 # V13b: 0.3→1.0, 与 tracking 同权重驱动步态涌现
             # ③ 步频正则化 — 空中时间 (van Marum 公式)
             feet_airtime = 0.3        # ⭐ 新增: (t_air - 0.4)·1_td
             # ④ 躯干姿态
