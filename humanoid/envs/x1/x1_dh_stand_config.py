@@ -364,7 +364,7 @@ class X1DHStandCfg(LeggedRobotCfg):
             # ④ 躯干姿态
             orientation = 0.5         # ⭐ 新增: 从 stability 拆出, exp(-||g_xy||×10)
             # ⑤ 质心高度
-            base_height = 0.2         # ⭐ 新增: 从 stability 拆出, exp(-|h-0.61|×10)
+            base_height = 0.5         # V13d: 0.2→0.5, 惩罚蹲低 (V13c height=0.17, 策略蹲着走锁死)
             # ⑥ 温和力矩正则化
             torque = 0.01             # ⭐ 新增: exp(-Σ|τ|/100), van Marum 权重 0.01
             # ⑦ 安全网
@@ -408,7 +408,7 @@ class X1DHStandCfgPPO(LeggedRobotCfgPPO):
         in_channels = X1DHStandCfg.env.frame_stack
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.001  # V13c: 0.005→0.001, 抑制noise_std暴涨 (V13b: 1.50→4.69 +213%)
+        entropy_coef = 0.003  # V13d: 0.001→0.003, 恢复探索 (V13c 0.001→noise_std 0.34冻结, V13b 0.005→4.69暴涨)
         learning_rate = 1e-5
         num_learning_epochs = 2
         gamma = 0.994
