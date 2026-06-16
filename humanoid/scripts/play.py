@@ -52,37 +52,21 @@ from threading import Thread
 
 
 x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, 0.0
-joystick_use = True
+# joystick only for local interactive mode
+joystick_use = False
 joystick_opened = False
+exit_flag = False
 
-if joystick_use:
-    pygame.init()
+def _init_joystick():
+    global joystick_use, joystick_opened
     try:
-        # get joystick
+        pygame.init()
         joystick = pygame.joystick.Joystick(0)
         joystick.init()
+        joystick_use = True
         joystick_opened = True
     except Exception as e:
-        print(f"无法打开手柄：{e}")
-    # joystick thread exit flag
-    exit_flag = False
-
-    def handle_joystick_input():
-        global exit_flag, x_vel_cmd, y_vel_cmd, yaw_vel_cmd, head_vel_cmd
-        
-        
-        while not exit_flag:
-            # get joystick input
-            pygame.event.get()
-            # update robot command
-            x_vel_cmd = -joystick.get_axis(1) * 1
-            y_vel_cmd = -joystick.get_axis(0) * 1
-            yaw_vel_cmd = -joystick.get_axis(3) * 1
-            pygame.time.delay(100)
-
-    if joystick_opened and joystick_use:
-        joystick_thread = Thread(target=handle_joystick_input)
-        joystick_thread.start()
+        pass  # no joystick/display, skip silently
 
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
@@ -120,7 +104,9 @@ def play(args):
         'rhp','rhr','rhy','rkp','rap','rar',   # right
     ]
     if LOG_GAIT:
-        gait_dir = os.path.join(LEGGED_GYM_ROOT_DIR, 'gait_logs')
+        # 优先存到挂载路径 /personal/ (训练平台可持久化), 回退到本地
+        output_root = '/personal' if os.path.isdir('/personal') else LEGGED_GYM_ROOT_DIR
+        gait_dir = os.path.join(output_root, 'gait_logs')
         os.makedirs(gait_dir, exist_ok=True)
         gait_path = os.path.join(gait_dir,
             'gait_{}.csv'.format(datetime.now().strftime('%Y%m%d_%H%M%S')))
@@ -149,9 +135,8 @@ def play(args):
         # ⑥ commands
         header += ['cmd_vx','cmd_vy','cmd_wz']
         # ⑦ per-step raw reward (10 items)
-        REW_KEYS = ['stability','swing_foot_forward','tracking_lin_vel','tracking_ang_vel',
-                     'ref_joint_pos','feet_contact_number','feet_clearance','foot_slip',
-                     'efficiency','collision']
+        REW_KEYS = ['tracking_lin_vel','tracking_ang_vel','single_foot_contact',
+                     'feet_airtime','orientation','base_height','torque']
         header += [f'rew_{k}' for k in REW_KEYS]
         gait_writer.writerow(header)
         print(f'[GaitCSV] Logging to: {gait_path}')
@@ -277,9 +262,8 @@ def play(args):
             row += [env.commands[ri,0].item(), env.commands[ri,1].item(), env.commands[ri,2].item()]
 
             # per-step raw rewards
-            REW_KEYS = ['stability','swing_foot_forward','tracking_lin_vel','tracking_ang_vel',
-                         'ref_joint_pos','feet_contact_number','feet_clearance','foot_slip',
-                         'efficiency','collision']
+            REW_KEYS = ['tracking_lin_vel','tracking_ang_vel','single_foot_contact',
+                         'feet_airtime','orientation','base_height','torque']
             per_step = getattr(env, '_per_step_raw_rew', {})
             for k in REW_KEYS:
                 if k in per_step:
@@ -358,8 +342,10 @@ def play(args):
         print(f'[GaitCSV] File closed: {gait_path}')
 
 if __name__ == '__main__':
-    EXPORT_POLICY = False
-    RENDER = True
-    FIX_COMMAND = True
     args = get_args()
+    EXPORT_POLICY = False
+    RENDER = not args.headless
+    FIX_COMMAND = True
+    if RENDER:
+        _init_joystick()
     play(args)
