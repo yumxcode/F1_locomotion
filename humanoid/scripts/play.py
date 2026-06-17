@@ -47,7 +47,6 @@ from isaacgym.torch_utils import *
 import torch
 from datetime import datetime
 
-import pygame
 from threading import Thread
 
 
@@ -60,6 +59,7 @@ exit_flag = False
 def _init_joystick():
     global joystick_use, joystick_opened
     try:
+        import pygame
         pygame.init()
         joystick = pygame.joystick.Joystick(0)
         joystick.init()
