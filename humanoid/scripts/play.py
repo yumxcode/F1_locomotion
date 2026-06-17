@@ -14,8 +14,8 @@
 # and/or other materials provided with the distribution.
 #
 # 3. Neither the name of the copyright holder nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
+# contributors may be used to endorse or promote products derived from this
+# software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -33,7 +33,7 @@
 
 import os
 import csv
-import sys
+import time
 import cv2
 import numpy as np
 from isaacgym import gymapi
@@ -41,6 +41,7 @@ from humanoid import LEGGED_GYM_ROOT_DIR
 
 # import isaacgym
 from humanoid.envs import *
+from humanoid.envs.x1.x1_dh_stand_env import get_euler_xyz_tensor as _get_euler_xyz_tensor
 from humanoid.utils import  get_args, export_policy_as_jit, task_registry, Logger
 from isaacgym.torch_utils import *
 
@@ -51,22 +52,40 @@ from threading import Thread
 
 
 x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, 0.0
-# joystick only for local interactive mode
-joystick_use = False
+PLAY_CMD_VEL_X = 0.4
+joystick_use = True
 joystick_opened = False
-exit_flag = False
 
-def _init_joystick():
-    global joystick_use, joystick_opened
+if joystick_use:
     try:
         import pygame
         pygame.init()
+        # get joystick
         joystick = pygame.joystick.Joystick(0)
         joystick.init()
-        joystick_use = True
         joystick_opened = True
     except Exception as e:
-        pass  # no joystick/display, skip silently
+        print(f"无法打开手柄/pygame：{e}")
+        joystick_use = False
+    # joystick thread exit flag
+    exit_flag = False
+
+    def handle_joystick_input():
+        global exit_flag, x_vel_cmd, y_vel_cmd, yaw_vel_cmd, head_vel_cmd
+        
+        
+        while not exit_flag:
+            # get joystick input
+            pygame.event.get()
+            # update robot command
+            x_vel_cmd = -joystick.get_axis(1) * 1
+            y_vel_cmd = -joystick.get_axis(0) * 1
+            yaw_vel_cmd = -joystick.get_axis(3) * 1
+            pygame.time.delay(100)
+
+    if joystick_opened and joystick_use:
+        joystick_thread = Thread(target=handle_joystick_input)
+        joystick_thread.start()
 
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
@@ -95,65 +114,22 @@ def play(args):
     env_cfg.noise.curriculum = False
     env_cfg.commands.heading_command = False
 
-    # ── Gait CSV Logger ──
-    LOG_GAIT = args.log_csv
-    gait_csv_file = None
-    gait_writer = None
-    JOINT_LABELS = [
-        'lhp','lhr','lhy','lkp','lap','lar',   # left: hip pitch/roll/yaw, knee, ankle pitch/roll
-        'rhp','rhr','rhy','rkp','rap','rar',   # right
-    ]
-    if LOG_GAIT:
-        # 优先存到挂载路径 /personal/ (训练平台可持久化), 回退到本地
-        output_root = '/personal' if os.path.isdir('/personal') else LEGGED_GYM_ROOT_DIR
-        gait_dir = os.path.join(output_root, 'gait_logs')
-        os.makedirs(gait_dir, exist_ok=True)
-        gait_path = os.path.join(gait_dir,
-            'gait_{}.csv'.format(datetime.now().strftime('%Y%m%d_%H%M%S')))
-        gait_csv_file = open(gait_path, 'w', newline='')
-        gait_writer = csv.writer(gait_csv_file)
-        header = [
-            # ① time & phase
-            't', 'phase', 'sin_pos', 'cos_pos',
-            # ② contact
-            'stance_l', 'stance_r', 'contact_l', 'contact_r',
-            # ③ base state
-            'base_x', 'base_y', 'base_z',
-            'base_pitch', 'base_roll', 'base_yaw',
-            'base_vx', 'base_vy', 'base_vz',
-            'base_wx', 'base_wy', 'base_wz',
-        ]
-        # ④ joint angles: actual + ref + vel
-        for jl in JOINT_LABELS:
-            header.append(f'dof_{jl}')
-        for jl in JOINT_LABELS:
-            header.append(f'ref_{jl}')
-        for jl in JOINT_LABELS:
-            header.append(f'dvel_{jl}')
-        # ⑤ foot state
-        header += ['foot_z_l','foot_z_r','foot_vx_l','foot_vx_r','foot_vy_l','foot_vy_r','cfz_l','cfz_r']
-        # ⑥ commands
-        header += ['cmd_vx','cmd_vy','cmd_wz']
-        # ⑦ per-step raw reward (10 items)
-        REW_KEYS = ['tracking_lin_vel','tracking_ang_vel','single_foot_contact',
-                     'feet_airtime','orientation','base_height','torque']
-        header += [f'rew_{k}' for k in REW_KEYS]
-        gait_writer.writerow(header)
-        print(f'[GaitCSV] Logging to: {gait_path}')
-
     train_cfg.seed = 123145
     print("train_cfg.runner_class_name:", train_cfg.runner_class_name)
 
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
+
+
     env.set_camera(env_cfg.viewer.pos, env_cfg.viewer.lookat)
+
 
     # load policy
     train_cfg.runner.resume = True
     ppo_runner, train_cfg, _ = task_registry.make_alg_runner(env=env, name=args.task, args=args, train_cfg=train_cfg)
     policy = ppo_runner.get_inference_policy(device=env.device)
     
-    # export policy as a jit module (used to run it from C++)
+    # export policy as a jit module (used to run from C++)
     current_date_str = datetime.now().strftime('%Y-%m-%d')
     current_time_str = datetime.now().strftime('%H-%M-%S')
     if EXPORT_POLICY:
@@ -165,12 +141,61 @@ def play(args):
     robot_index = 0 # which robot is used for logging
     joint_index = 5 # which joint is used for logging
     stop_state_log = 1000 # number of steps before plotting states
+
+    custom_save_path = "/personal/train-more"
+    run_name_str = args.run_name if args.run_name is not None else "test"
+    os.makedirs(custom_save_path, exist_ok=True)
+
+    _csv_file = None
+    if LOG_CSV:
+        _JOINT_NAMES = [
+            'left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint',
+            'left_knee_pitch_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint',
+            'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint',
+            'right_knee_pitch_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint',
+        ]
+        _csv_header = ['timestamp_ns', 'phase_sin', 'phase_cos',
+                       'cmd_linear_x', 'cmd_linear_y', 'cmd_angular_z',
+                       'left_contact', 'right_contact',
+                       'base_euler_x', 'base_euler_y', 'base_euler_z',
+                       'base_ang_vel_x', 'base_ang_vel_y', 'base_ang_vel_z']
+        for _jn in _JOINT_NAMES:
+            _csv_header += [f'action_{_jn}', f'pos_{_jn}', f'vel_{_jn}', f'effort_{_jn}',
+                            f'pos_des_raw_{_jn}', f'pos_des_lpf_{_jn}',
+                            f'tau_des_raw_{_jn}', f'tau_des_lpf_{_jn}', f'is_parallel_{_jn}']
+        _csv_header += ['clip_count',
+                        'imu_quat_w', 'imu_quat_x', 'imu_quat_y', 'imu_quat_z',
+                        'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
+                        'imu_accel_x', 'imu_accel_y', 'imu_accel_z']
+        _csv_header += ['left_foot_contact_force_z', 'right_foot_contact_force_z',
+                        'left_foot_contact_force_mag', 'right_foot_contact_force_mag',
+                        'feet_contact_force_penalty']
+        _csv_header += ['base_lin_vel_x', 'base_lin_vel_y', 'base_lin_vel_z']
+        _csv_path = os.path.join(custom_save_path, f'isaac_diag_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
+        _csv_file = open(_csv_path, 'w', newline='')
+        _csv_writer = csv.writer(_csv_file)
+        _csv_writer.writerow(_csv_header)
+        print(f'CSV logging to: {_csv_path}')
+        _action_scale = env.cfg.control.action_scale
+        _ankle_action_scale = getattr(env.cfg.control, 'ankle_action_scale', _action_scale)
+        _ankle_indices = [4, 5, 10, 11]
+        _ddp = env.default_dof_pos
+        _default_dof_pos = (_ddp[robot_index] if _ddp.dim() > 1 else _ddp).cpu()
+        _feet_idx = env.feet_indices.detach().cpu().numpy().tolist()
+        _left_foot_idx, _right_foot_idx = int(_feet_idx[0]), int(_feet_idx[1])
+        _max_contact_force = env.cfg.rewards.max_contact_force
+        print(f'feet body indices (left,right) = ({_left_foot_idx},{_right_foot_idx}), '
+              f'max_contact_force = {_max_contact_force}N')
+        _csv_max_steps = int(10.0 / (env_cfg.sim.dt * env_cfg.control.decimation))
+        _step_dt_ns = int(env_cfg.sim.dt * env_cfg.control.decimation * 1e9)
+        _t0_ns = time.time_ns()
+
     if RENDER:
         camera_properties = gymapi.CameraProperties()
         camera_properties.width = 1920
         camera_properties.height = 1080
         h1 = env.gym.create_camera_sensor(env.envs[0], camera_properties)
-        camera_offset = gymapi.Vec3(1, -1, 0.5)
+        camera_offset = gymapi.Vec3(2.0, -2.0, 1.5)
         camera_rotation = gymapi.Quat.from_axis_angle(gymapi.Vec3(-0.3, 0.2, 1),
                                                     np.deg2rad(135))
         actor_handle = env.gym.get_actor_handle(env.envs[0], 0)
@@ -181,25 +206,37 @@ def play(args):
             gymapi.FOLLOW_POSITION)
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_dir = os.path.join(LEGGED_GYM_ROOT_DIR, 'videos')
-        experiment_dir = os.path.join(LEGGED_GYM_ROOT_DIR, 'videos', train_cfg.runner.experiment_name)
-        run_name = args.run_name if args.run_name else ''
-        dir = os.path.join(experiment_dir, datetime.now().strftime('%b%d_%H-%M-%S') + run_name + '.mp4')
-        if not os.path.exists(video_dir):
-            os.makedirs(video_dir,exist_ok=True)
-        if not os.path.exists(experiment_dir):
-            os.makedirs(experiment_dir,exist_ok=True)
-        video = cv2.VideoWriter(dir, fourcc, 50.0, (1920, 1080))
-    
-    obs = env.get_observations()
 
+        file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_name_str}.mp4"
+        video_filepath = os.path.join(custom_save_path, file_name)
+        print(f"Recording video to: {video_filepath}")
+        video = cv2.VideoWriter(video_filepath, fourcc, 50.0, (1920, 1080))
+
+    obs = env.get_observations()
+    frame_count = 0
     np.set_printoptions(formatter={'float': '{:0.4f}'.format})
+    _obs_off = (env_cfg.env.frame_stack - 1) * env_cfg.env.num_single_obs
+
+    vel_sum = 0.0
+    step_accum = 0
+
+    # warmup obs history (frame_stack steps) before evaluation
+    _warmup_steps = env_cfg.env.frame_stack
+    for _ in range(_warmup_steps):
+        _w_actions = policy(obs.detach())
+        if FIX_COMMAND:
+            env.commands[:, 0] = PLAY_CMD_VEL_X
+            env.commands[:, 1] = 0
+            env.commands[:, 2] = 0
+            env.commands[:, 3] = 0.
+        obs, _, _, _, _ = env.step(_w_actions.detach())
+
     for i in range(10*stop_state_log):
         
         actions = policy(obs.detach()) # * 0.
         
         if FIX_COMMAND:
-            env.commands[:, 0] = 0.5   # 1.0
+            env.commands[:, 0] = PLAY_CMD_VEL_X
             env.commands[:, 1] = 0
             env.commands[:, 2] = 0
             env.commands[:, 3] = 0.
@@ -209,88 +246,143 @@ def play(args):
             env.commands[:, 1] = y_vel_cmd
             env.commands[:, 2] = yaw_vel_cmd
             env.commands[:, 3] = 0.
-        
+
+        _current_obs = obs
+
         obs, critic_obs, rews, dones, infos = env.step(actions.detach())
+        current_vel_x = env.base_lin_vel[0, 0].item()
+        vel_sum += current_vel_x
+        step_accum += 1
 
-        # ── Gait CSV logging (100Hz, every control step) ──
-        if LOG_GAIT and gait_writer is not None:
-            ri = robot_index  # shorthand
-            dt = env_cfg.sim.dt * env_cfg.control.decimation
-            t = i * dt
-
-            # phase
-            phase = env._get_phase()[ri].item()
-            sin_pos = np.sin(2 * np.pi * phase)
-            cos_pos = np.cos(2 * np.pi * phase)
-
-            # stance / contact
-            stance_mask = env._get_stance_mask()[ri]
-            contact = (env.contact_forces[ri, env.feet_indices, 2] > 5.).float()
-            row = [t, phase, sin_pos, cos_pos,
-                   stance_mask[0].item(), stance_mask[1].item(),
-                   contact[0].item(), contact[1].item()]
-
-            # base state
-            from humanoid.envs.x1.x1_dh_stand_env import get_euler_xyz_tensor
-            base_euler = get_euler_xyz_tensor(env.base_quat[ri:ri+1])[0]
-            row += [env.root_states[ri,0].item(), env.root_states[ri,1].item(), env.root_states[ri,2].item(),
-                    base_euler[1].item(), base_euler[0].item(), base_euler[2].item(),
-                    env.base_lin_vel[ri,0].item(), env.base_lin_vel[ri,1].item(), env.base_lin_vel[ri,2].item(),
-                    env.base_ang_vel[ri,0].item(), env.base_ang_vel[ri,1].item(), env.base_ang_vel[ri,2].item()]
-
-            # 12 actual joint positions
-            for j in range(12):
-                row.append(env.dof_pos[ri, j].item())
-            # 12 ref joint positions
-            for j in range(12):
-                row.append(env.ref_dof_pos[ri, j].item())
-            # 12 joint velocities
-            for j in range(12):
-                row.append(env.dof_vel[ri, j].item())
-
-            # foot state
-            feet_z = env.rigid_state[ri, env.feet_indices, 2] - env.cfg.rewards.feet_to_ankle_distance
-            feet_vx = env.rigid_state[ri, env.feet_indices, 7]
-            feet_vy = env.rigid_state[ri, env.feet_indices, 8]
-            cfz = env.contact_forces[ri, env.feet_indices, 2]
-            row += [feet_z[0].item(), feet_z[1].item(),
-                    feet_vx[0].item(), feet_vx[1].item(),
-                    feet_vy[0].item(), feet_vy[1].item(),
-                    cfz[0].item(), cfz[1].item()]
-
-            # commands
-            row += [env.commands[ri,0].item(), env.commands[ri,1].item(), env.commands[ri,2].item()]
-
-            # per-step raw rewards
-            REW_KEYS = ['tracking_lin_vel','tracking_ang_vel','single_foot_contact',
-                         'feet_airtime','orientation','base_height','torque']
-            per_step = getattr(env, '_per_step_raw_rew', {})
-            for k in REW_KEYS:
-                if k in per_step:
-                    row.append(per_step[k][ri].item())
-                else:
-                    row.append(0.0)
-
-            gait_writer.writerow(row)
+        if LOG_CSV:
+            _base_quat = env.root_states[robot_index:robot_index+1, 3:7]
+            _euler = _get_euler_xyz_tensor(_base_quat)[0]
+            _r, _p, _y = _euler[0].item(), _euler[1].item(), _euler[2].item()
+            _lf_force_vec = env.contact_forces[robot_index, _left_foot_idx, :]
+            _rf_force_vec = env.contact_forces[robot_index, _right_foot_idx, :]
+            _lf_force_z = _lf_force_vec[2].item()
+            _rf_force_z = _rf_force_vec[2].item()
+            _lf_force_mag = torch.norm(_lf_force_vec).item()
+            _rf_force_mag = torch.norm(_rf_force_vec).item()
+            _csv_row = [
+                _t0_ns + i * _step_dt_ns,
+                _current_obs[robot_index, _obs_off + 0].item(),
+                _current_obs[robot_index, _obs_off + 1].item(),
+                env.commands[robot_index, 0].item(),
+                env.commands[robot_index, 1].item(),
+                env.commands[robot_index, 2].item(),
+                int(_lf_force_z > 5.0),
+                int(_rf_force_z > 5.0),
+                _r, _p, _y,
+                env.base_ang_vel[robot_index, 0].item(),
+                env.base_ang_vel[robot_index, 1].item(),
+                env.base_ang_vel[robot_index, 2].item(),
+            ]
+            for _j in range(12):
+                _act = actions[robot_index, _j].item()
+                _pos = env.dof_pos[robot_index, _j].item()
+                _vel = env.dof_vel[robot_index, _j].item()
+                _eff = env.torques[robot_index, _j].item()
+                _scale = _ankle_action_scale if _j in _ankle_indices else _action_scale
+                _pos_des = _act * _scale + _default_dof_pos[_j].item()
+                _csv_row += [_act, _pos, _vel, _eff, _pos_des, _pos_des, float('nan'), float('nan'), 0]
+            _csv_row += [
+                0,
+                env.root_states[robot_index, 6].item(),
+                env.root_states[robot_index, 3].item(),
+                env.root_states[robot_index, 4].item(),
+                env.root_states[robot_index, 5].item(),
+                env.base_ang_vel[robot_index, 0].item(),
+                env.base_ang_vel[robot_index, 1].item(),
+                env.base_ang_vel[robot_index, 2].item(),
+                float('nan'), float('nan'), float('nan'),
+            ]
+            _lf_pen = min(max(_lf_force_mag - _max_contact_force, 0.0), 400.0)
+            _rf_pen = min(max(_rf_force_mag - _max_contact_force, 0.0), 400.0)
+            _csv_row += [
+                _lf_force_z, _rf_force_z,
+                _lf_force_mag, _rf_force_mag,
+                _lf_pen + _rf_pen,
+            ]
+            _csv_row += [
+                env.base_lin_vel[robot_index, 0].item(),
+                env.base_lin_vel[robot_index, 1].item(),
+                env.base_lin_vel[robot_index, 2].item(),
+            ]
+            if i < _csv_max_steps:
+                _csv_writer.writerow(_csv_row)
 
         if RENDER:
+            frame_count += 1
             env.gym.fetch_results(env.sim, True)
             env.gym.step_graphics(env.sim)
             env.gym.render_all_camera_sensors(env.sim)
-            img = env.gym.get_camera_image(env.sim, env.envs[0], h1, gymapi.IMAGE_COLOR)
-            img = np.reshape(img, (1080, 1920, 4))
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            video.write(img[..., :3])
+
+            if frame_count % 2 == 0:
+                img = env.gym.get_camera_image(env.sim, env.envs[0], h1, gymapi.IMAGE_COLOR)
+                img = np.reshape(img, (1080, 1920, 4))
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+                target_vel = env.commands[0, 0].item()
+                current_vel_x = env.base_lin_vel[0, 0].item()
+                avg_vel = vel_sum / step_accum if step_accum > 0 else 0.0
+
+                if LOG_CSV:
+                    left_force = _lf_force_z
+                    right_force = _rf_force_z
+                else:
+                    left_force = env.contact_forces[0, env.feet_indices[0], 2].item()
+                    right_force = env.contact_forces[0, env.feet_indices[1], 2].item()
+
+                l_on = left_force > 1.0
+                r_on = right_force > 1.0
+
+                img_h, img_w = img.shape[:2]
+                base_x = img_w - 1150
+                base_y = 60
+                line_height = 50
+
+                def draw_outlined_text(image, text, pos, color, scale=0.9):
+                    cv2.putText(image, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 4, cv2.LINE_AA)
+                    cv2.putText(image, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2, cv2.LINE_AA)
+
+                speed_text = f"CMD: {target_vel:.2f} | REAL: {current_vel_x:.2f} | AVG: {avg_vel:.2f}"
+                draw_outlined_text(img, speed_text, (base_x, base_y), (255, 255, 0), 1.0)
+
+                l_color = (0, 255, 0) if l_on else (0, 0, 255)
+                l_text = f"L-FOOT: {'ON ' if l_on else 'OFF'} ({left_force:.1f} N)"
+                draw_outlined_text(img, l_text, (base_x, base_y + line_height), l_color)
+
+                r_color = (0, 255, 0) if r_on else (0, 0, 255)
+                r_text = f"R-FOOT: {'ON ' if r_on else 'OFF'} ({right_force:.1f} N)"
+                draw_outlined_text(img, r_text, (base_x, base_y + line_height * 2), r_color)
+
+                state_text = "STATE: SINGLE SUPPORT"
+                state_color = (200, 200, 200)
+
+                if l_on and r_on:
+                    state_text = "STATE: *** DOUBLE SUPPORT ***"
+                    state_color = (0, 255, 255)
+                elif not l_on and not r_on:
+                    state_text = "STATE: >>> FLIGHT PHASE <<<"
+                    state_color = (255, 0, 255)
+
+                draw_outlined_text(img, state_text, (base_x, base_y + line_height * 3), state_color, 1.0)
+
+                video.write(img[..., :3])
+        real_cmd_x = env.commands[robot_index, 0].item()
 
         if i > stop_state_log*0.2 and i < stop_state_log:
+            _lf_idx = int(env.feet_indices[0].item())
+            _rf_idx = int(env.feet_indices[1].item())
             dict = {
                     'base_height' : env.root_states[robot_index, 2].item(),
-                    'foot_z_l' : env.rigid_state[robot_index,4,2].item(),
-                    'foot_z_r' : env.rigid_state[robot_index,9,2].item(),
-                    'foot_forcez_l' : env.contact_forces[robot_index,4,2].item(),
-                    'foot_forcez_r' : env.contact_forces[robot_index,9,2].item(),
+                    'foot_z_l' : env.rigid_state[robot_index, _lf_idx, 2].item(),
+                    'foot_z_r' : env.rigid_state[robot_index, _rf_idx, 2].item(),
+                    'foot_forcez_l' : env.contact_forces[robot_index, _lf_idx, 2].item(),
+                    'foot_forcez_r' : env.contact_forces[robot_index, _rf_idx, 2].item(),
                     'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
-                    'command_x': x_vel_cmd,
+                    'command_x': real_cmd_x,
                     'base_vel_y':  env.base_lin_vel[robot_index, 1].item(),
                     'command_y': y_vel_cmd,
                     'base_vel_z':  env.base_lin_vel[robot_index, 2].item(),
@@ -300,52 +392,43 @@ def play(args):
                     'dof_pos': env.dof_pos[robot_index, 0].item(),
                     'dof_vel': env.dof_vel[robot_index, 0].item(),
                     'dof_torque': env.torques[robot_index, 0].item(),
-                    'command_sin': obs[0,0].item(),
-                    'command_cos': obs[0,1].item(),
+                    'command_sin': obs[robot_index, _obs_off + 0].item(),
+                    'command_cos': obs[robot_index, _obs_off + 1].item(),
                 }
 
-            # add dof_pos_target
-            for i in range(env_cfg.env.num_actions):
-                dict[f'dof_pos_target[{i}]'] = actions[robot_index, i].item() * env.cfg.control.action_scale,
+            for _j in range(env_cfg.env.num_actions):
+                dict[f'dof_pos_target[{_j}]'] = actions[robot_index, _j].item() * env.cfg.control.action_scale,
 
-            # add dof_pos
-            for i in range(env_cfg.env.num_actions):
-                dict[f'dof_pos[{i}]'] = env.dof_pos[robot_index, i].item(),
+            for _j in range(env_cfg.env.num_actions):
+                dict[f'dof_pos[{_j}]'] = env.dof_pos[robot_index, _j].item(),
 
-            # add dof_torque
-            for i in range(env_cfg.env.num_actions):
-                dict[f'dof_torque[{i}]'] = env.torques[robot_index, i].item(),
+            for _j in range(env_cfg.env.num_actions):
+                dict[f'dof_torque[{_j}]'] = env.torques[robot_index, _j].item(),
 
-            # add dof_vel
-            for i in range(env_cfg.env.num_actions):
-                dict[f'dof_vel[{i}]'] = env.dof_vel[robot_index, i].item(),
+            for _j in range(env_cfg.env.num_actions):
+                dict[f'dof_vel[{_j}]'] = env.dof_vel[robot_index, _j].item(),
 
             logger.log_states(dict=dict)
         
-        elif _== stop_state_log:
-            logger.plot_states()
         elif i == stop_state_log:
             logger.plot_states()
 
-        # ====================== Log states ======================
         if infos["episode"]:
             num_episodes = torch.sum(env.reset_buf).item()
             if num_episodes>0:
                 logger.log_rewards(infos["episode"], num_episodes)
 
+    if LOG_CSV:
+        _csv_file.close()
+        print(f'CSV saved to: {_csv_path}')
+
     if RENDER:
         video.release()
 
-    # ── Close gait CSV ──
-    if gait_csv_file is not None:
-        gait_csv_file.close()
-        print(f'[GaitCSV] File closed: {gait_path}')
-
 if __name__ == '__main__':
-    args = get_args()
     EXPORT_POLICY = False
-    RENDER = not args.headless
+    RENDER = True
+    LOG_CSV = True
     FIX_COMMAND = True
-    if RENDER:
-        _init_joystick()
+    args = get_args()
     play(args)
