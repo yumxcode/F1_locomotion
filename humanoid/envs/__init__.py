@@ -38,6 +38,10 @@ from .x1.x1_dh_stand_config  import X1DHStandCfg, X1DHStandCfgPPO
 
 from .x1.x1_dh_stand_env import X1DHStandEnv
 
+# FlashSAC config (same X1 robot/env, off-policy SAC training)
+from .x1.x1_flashsac_config import X1FlashSACCfg, X1FlashSACCfgPPO
+
 from humanoid.utils.task_registry import task_registry
 
 task_registry.register( "x1_dh_stand", X1DHStandEnv, X1DHStandCfg(), X1DHStandCfgPPO() )
+task_registry.register( "x1_flashsac", X1DHStandEnv, X1FlashSACCfg(), X1FlashSACCfgPPO() )
