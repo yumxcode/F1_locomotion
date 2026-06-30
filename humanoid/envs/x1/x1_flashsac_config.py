@@ -47,21 +47,20 @@ class X1FlashSACCfgPPO(LeggedRobotCfgPPO):
         tau = 0.01                       # EMA target-critic coefficient
         actor_lr = 3e-4
         critic_lr = 3e-4
-        temp_lr = 3e-4
-        init_alpha = 0.01                # initial entropy temperature
-        target_sigma = 0.15             # target-entropy sigma
+        temp_lr = 1e-4                   # lower temp LR to prevent alpha collapse
+        init_alpha = 0.2                 # higher init to sustain exploration
+        target_sigma = 0.3              # higher target entropy for more exploration
         actor_update_period = 2          # actor updated every N critic updates
         max_grad_norm = 1.0
         # ---- distributional critic ----
-        num_bins = 101
+        num_bins = 201                   # finer bin resolution
         num_qs = 2
-        normalized_G_max = 5.0           # value support bound (+/-)
+        normalized_G_max = 20.0          # wider value support to avoid Q saturation
         normalize_reward = True
         # ---- replay buffer ----
-        # obs_dim=3102 (66 frames * 47), so 200k transitions ~ 2.3GB on GPU;
-        # 2M would need ~23GB and OOM on a 24G card.
-        buffer_max_length = 200_000
-        buffer_min_length = 4_000
+        # obs_dim=3102 (66 frames * 47); 500k transitions ~ 12GB (7 tensors) on 24G GPU
+        buffer_max_length = 500_000
+        buffer_min_length = 10_000
         # ---- update cadence ----
         batch_size = 2048
         updates_per_interaction_step = 2     # gradient updates per env step

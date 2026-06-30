@@ -86,6 +86,8 @@ class FlashSAC:
         self.v_min = critic.v_min
         self.v_max = critic.v_max
 
+        self._last_actor_loss = 0.0   # persist actor_loss across non-update steps
+
     # ------------------------------------------------------------------ #
     def _infer_action_dim(self) -> int:
         return int(self.actor.num_actions)
@@ -168,6 +170,9 @@ class FlashSAC:
                 torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.actor_opt.step()
             info["actor_loss"] = float(actor_loss.item())
+            self._last_actor_loss = info["actor_loss"]
+        else:
+            info["actor_loss"] = self._last_actor_loss
 
         # --------------------------- temperature -------------------------- #
         # need a log_prob for the temperature update; reuse a fresh sample if
