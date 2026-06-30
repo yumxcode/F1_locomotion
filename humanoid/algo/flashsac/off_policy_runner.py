@@ -55,45 +55,59 @@ class FlashSACOffPolicyRunner:
             num_short_obs=num_short_obs,
             num_proprio_obs=num_single_obs,
             num_actions=num_actions,
-            actor_hidden_dims=self.policy_cfg.get("actor_hidden_dims", [512, 256, 128]),
-            state_estimator_hidden_dims=self.policy_cfg.get("state_estimator_hidden_dims", [256, 128, 64]),
+            actor_hidden_dims=self.policy_cfg.get("actor_hidden_dims", [128]),
+            state_estimator_hidden_dims=self.policy_cfg.get("state_estimator_hidden_dims", [128, 64]),
             in_channels=self.policy_cfg.get("in_channels", self.env.cfg.env.frame_stack),
             kernel_size=self.policy_cfg.get("kernel_size", [6, 4]),
             filter_size=self.policy_cfg.get("filter_size", [32, 16]),
             stride_size=self.policy_cfg.get("stride_size", [3, 2]),
             lh_output_dim=self.policy_cfg.get("lh_output_dim", 64),
-            init_noise_std=self.policy_cfg.get("init_noise_std", 1.0),
+            init_noise_std=self.policy_cfg.get("init_noise_std", 0.5),
+            actor_num_blocks=self.policy_cfg.get("actor_num_blocks", 2),
         ).to(self.device)
 
         critic = DistributionalDoubleQCritic(
             num_critic_obs=num_critic_obs,
             num_actions=num_actions,
-            critic_hidden_dims=self.policy_cfg.get("critic_hidden_dims", [768, 256, 128]),
-            num_bins=self.alg_cfg.get("num_bins", 101),
-            v_min=-abs(float(self.alg_cfg.get("normalized_G_max", 5.0))),
-            v_max=abs(float(self.alg_cfg.get("normalized_G_max", 5.0))),
+            critic_hidden_dims=self.policy_cfg.get("critic_hidden_dims", [256]),
+            num_bins=self.alg_cfg.get("num_bins", 201),
+            v_min=-abs(float(self.alg_cfg.get("normalized_G_max", 20.0))),
+            v_max=abs(float(self.alg_cfg.get("normalized_G_max", 20.0))),
             num_qs=self.alg_cfg.get("num_qs", 2),
+            critic_num_blocks=self.policy_cfg.get("critic_num_blocks", 2),
         ).to(self.device)
 
         print(f"FlashSAC Actor: {actor}")
         print(f"FlashSAC Critic: {critic}")
 
+        # ---- compute LR schedule steps ----
+        max_iters = int(self.cfg.get("max_iterations", 20000))
+        steps_per_iter = int(self.cfg.get("num_steps_per_env", 24))
+        updates_per_step = float(self.alg_cfg.get("updates_per_interaction_step", 2))
+        lr_total_steps = int(max_iters * steps_per_iter * self.env.num_envs * updates_per_step / self.env.num_envs)
+        lr_warmup_steps = max(1000, int(0.05 * lr_total_steps))
+
         # ---- algorithm ----
         self.alg = FlashSAC(
             actor=actor, critic=critic,
+            num_envs=self.env.num_envs,
             gamma=self.alg_cfg.get("gamma", 0.99),
             n_step=self.alg_cfg.get("n_step", 3),
             tau=self.alg_cfg.get("tau", 0.01),
             actor_lr=self.alg_cfg.get("actor_lr", 3e-4),
             critic_lr=self.alg_cfg.get("critic_lr", 3e-4),
-            temp_lr=self.alg_cfg.get("temp_lr", 3e-4),
-            init_alpha=self.alg_cfg.get("init_alpha", 0.01),
-            target_sigma=self.alg_cfg.get("target_sigma", 0.15),
+            temp_lr=self.alg_cfg.get("temp_lr", 1e-4),
+            lr_warmup_steps=lr_warmup_steps,
+            lr_total_steps=lr_total_steps,
+            init_alpha=self.alg_cfg.get("init_alpha", 0.2),
+            target_sigma=self.alg_cfg.get("target_sigma", 0.3),
             actor_update_period=self.alg_cfg.get("actor_update_period", 2),
             max_grad_norm=self.alg_cfg.get("max_grad_norm", 1.0),
-            num_bins=self.alg_cfg.get("num_bins", 101),
-            normalized_G_max=self.alg_cfg.get("normalized_G_max", 5.0),
+            num_bins=self.alg_cfg.get("num_bins", 201),
+            normalized_G_max=self.alg_cfg.get("normalized_G_max", 20.0),
             normalize_reward=self.alg_cfg.get("normalize_reward", True),
+            zeta_mu=self.alg_cfg.get("zeta_mu", 2.0),
+            zeta_max_n=self.alg_cfg.get("zeta_max_n", 16),
             device=self.device,
         )
 

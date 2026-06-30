@@ -1,14 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 (FlashSAC port for F1_locomotion).
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# Core FlashSAC algorithm: off-policy Soft Actor-Critic with
-#   * distributional categorical double-Q critic (C51-style TD projection)
-#   * auto-tuned entropy temperature (target entropy 0.5*A*ln(2*pi*e*sigma^2))
-#   * running reward normalization (value support = +/- normalized_G_max)
-#   * EMA target critic (soft update, tau)
-#   * delayed actor updates (actor_update_period)
-# This class drives gradient updates from the replay buffer. The training loop
-# (collect -> add -> update) lives in ``FlashSACOffPolicyRunner``.
+# Core FlashSAC algorithm (aligned with original paper/repo):
+#   * Zeta-distribution action-noise repetition (time-correlated exploration)
+#   * Weight normalization (normalize_parameters after every optimizer step)
+#   * Warmup-cosine-decay LR schedule
+#   * Distributional categorical double-Q critic
+#   * Auto-tuned entropy temperature
+#   * Running reward normalization + n-step returns
 
 import copy
 import math
@@ -18,32 +17,36 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from .networks import (DualHistoryTanhGaussianActor, DistributionalDoubleQCritic,
-                       RunningRewardNormalizer, categorical_td_target)
+                       RunningRewardNormalizer, categorical_td_target,
+                       normalize_parameters, build_zeta_cdf, sample_zeta_n)
 
 
 class FlashSAC:
-    """FlashSAC algorithm.
-
-    The replay buffer is owned by the runner (it is created from env shapes);
-    it is injected here via ``attach_buffer`` so that ``update`` can sample it.
-    """
+    """FlashSAC algorithm (paper-aligned)."""
 
     def __init__(self,
                  actor: DualHistoryTanhGaussianActor,
                  critic: DistributionalDoubleQCritic,
+                 num_envs: int,
                  gamma=0.99,
                  n_step=3,
-                 tau=0.01,                       # EMA target-critic coefficient
+                 tau=0.01,
                  actor_lr=3e-4,
                  critic_lr=3e-4,
                  temp_lr=3e-4,
-                 init_alpha=0.01,                # initial entropy temperature
-                 target_sigma=0.15,             # target-entropy sigma
-                 actor_update_period=2,          # actor updated every N critic updates
+                 lr_warmup_steps=1000,
+                 lr_total_steps=50000,
+                 init_alpha=0.2,
+                 target_sigma=0.3,
+                 actor_update_period=2,
                  max_grad_norm=1.0,
-                 num_bins=101,
-                 normalized_G_max=5.0,           # +/- value support bound
+                 num_bins=201,
+                 normalized_G_max=20.0,
                  normalize_reward=True,
+                 actor_num_blocks=2,
+                 critic_num_blocks=2,
+                 zeta_mu=2.0,
+                 zeta_max_n=16,
                  device="cpu"):
         self.device = device
         self.gamma = float(gamma)
@@ -55,6 +58,7 @@ class FlashSAC:
         self.normalized_G_max = float(normalized_G_max)
         self.normalize_reward = bool(normalize_reward)
         self.gamma_n = self.gamma ** self.n_step
+        self.num_envs = int(num_envs)
 
         # ---- networks ----
         self.actor = actor.to(self.device)
@@ -63,16 +67,20 @@ class FlashSAC:
         for p in self.target_critic.parameters():
             p.requires_grad_(False)
 
-        # ---- optimizers ----
+        # ---- optimizers + warmup-cosine-decay LR scheduler ----
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=actor_lr)
         self.critic_opt = optim.Adam(self.critic.parameters(), lr=critic_lr)
+
+        self.actor_scheduler = _WarmupCosineDecay(actor_lr, actor_lr * 0.5,
+                                                   lr_warmup_steps, lr_total_steps)
+        self.critic_scheduler = _WarmupCosineDecay(critic_lr, critic_lr * 0.5,
+                                                    lr_warmup_steps, lr_total_steps)
 
         # ---- entropy temperature (auto-tuned) ----
         self.log_alpha = torch.nn.Parameter(
             torch.tensor(math.log(max(init_alpha, 1e-6)), device=self.device,
                          dtype=torch.float32))
         self.temp_opt = optim.Adam([self.log_alpha], lr=temp_lr)
-        # FlashSAC target entropy: 0.5 * A * ln(2*pi*e*sigma^2)
         action_dim = self._infer_action_dim()
         self.target_entropy = 0.5 * action_dim * math.log(2.0 * math.pi * math.e * (target_sigma ** 2))
 
@@ -82,11 +90,21 @@ class FlashSAC:
         self.buffer = None
         self.update_count = 0
 
-        # cache value-support bounds for the TD projection
         self.v_min = critic.v_min
         self.v_max = critic.v_max
 
-        self._last_actor_loss = 0.0   # persist actor_loss across non-update steps
+        # ---- Zeta noise state (time-correlated exploration) ----
+        self._zeta_cdf = build_zeta_cdf(mu=zeta_mu, max_n=zeta_max_n).to(self.device)
+        self._zeta_noise = torch.zeros(num_envs, action_dim, device=self.device)
+        self._zeta_n = torch.ones(num_envs, dtype=torch.long, device=self.device)
+        self._zeta_count = torch.zeros(num_envs, dtype=torch.long, device=self.device)
+
+        # ---- weight normalization on init ----
+        normalize_parameters(self.actor)
+        normalize_parameters(self.critic)
+        normalize_parameters(self.target_critic)
+
+        self._last_actor_loss = 0.0
 
     # ------------------------------------------------------------------ #
     def _infer_action_dim(self) -> int:
@@ -100,15 +118,36 @@ class FlashSAC:
         return self.log_alpha.exp()
 
     # ------------------------------------------------------------------ #
+    # Action sampling with zeta-distribution noise repetition              #
+    # ------------------------------------------------------------------ #
+    @torch.no_grad()
     def act(self, obs, deterministic=False):
-        """Sample an action for the given (batched) actor observation."""
-        with torch.no_grad():
-            action, _, _ = self.actor(obs.to(self.device), deterministic=deterministic)
+        """Sample action with time-correlated zeta noise (FlashSAC's core)."""
+        obs = obs.to(self.device)
+        mean, log_std = self.actor.get_mean_logstd(obs)
+        std = log_std.exp()
+
+        if deterministic:
+            return torch.tanh(mean)
+
+        # Zeta noise repetition: keep same noise vector for ~n steps
+        reinit = (self._zeta_count == 0) | (self._zeta_count >= self._zeta_n)
+        if reinit.any():
+            new_noise = torch.randn_like(mean)
+            new_n = sample_zeta_n(self._zeta_cdf, self.num_envs, self.device)
+            self._zeta_noise = torch.where(reinit.unsqueeze(-1), new_noise, self._zeta_noise)
+            self._zeta_n = torch.where(reinit, new_n, self._zeta_n)
+            self._zeta_count = torch.where(reinit, torch.zeros_like(self._zeta_count), self._zeta_count)
+
+        # temperature = 1.0 during stochastic exploration
+        action = torch.tanh(mean + std * self._zeta_noise)
+        self._zeta_count += 1
         return action
 
     # ------------------------------------------------------------------ #
     def update(self, batch_size):
-        """One gradient step (critic + delayed actor + temperature + target EMA)."""
+        """One gradient step (critic + delayed actor + temperature + target EMA
+        + weight normalization)."""
         assert self.buffer is not None, "Replay buffer not attached"
         batch = self.buffer.sample(batch_size)
         obs = batch["obs"]
@@ -119,7 +158,6 @@ class FlashSAC:
         next_cobs = batch["next_critic_obs"]
         done = batch["done"]
 
-        # reward normalization (update running stats with the raw reward first)
         if self.normalize_reward:
             self.reward_normalizer.update(reward)
             reward = self.reward_normalizer.normalize(reward)
@@ -148,9 +186,9 @@ class FlashSAC:
         if self.max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.critic_opt.step()
+        normalize_parameters(self.critic)          # ← weight normalization
         info["critic_loss"] = float(critic_loss.item())
 
-        # q value for diagnostics + actor
         with torch.no_grad():
             q_vals = self.critic.expected_values(cobs, action)
             q_diag = torch.min(torch.cat(q_vals, dim=-1), dim=-1, keepdim=True)[0]
@@ -169,14 +207,13 @@ class FlashSAC:
             if self.max_grad_norm is not None:
                 torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.actor_opt.step()
+            normalize_parameters(self.actor)        # ← weight normalization
             info["actor_loss"] = float(actor_loss.item())
             self._last_actor_loss = info["actor_loss"]
         else:
             info["actor_loss"] = self._last_actor_loss
 
         # --------------------------- temperature -------------------------- #
-        # need a log_prob for the temperature update; reuse a fresh sample if
-        # the actor wasn't updated this step.
         if actor_log_prob is None:
             with torch.no_grad():
                 _, actor_log_prob, _ = self.actor(obs)
@@ -192,6 +229,10 @@ class FlashSAC:
         with torch.no_grad():
             for tp, p in zip(self.target_critic.parameters(), self.critic.parameters()):
                 tp.mul_(1.0 - self.tau).add_(self.tau * p)
+
+        # --------------------------- LR schedule -------------------------- #
+        self.actor_scheduler.step(self.actor_opt)
+        self.critic_scheduler.step(self.critic_opt)
 
         self.update_count += 1
         return info
@@ -222,3 +263,31 @@ class FlashSAC:
             self.temp_opt.load_state_dict(sd["temp_opt"])
         self.reward_normalizer.load_state_dict(sd["reward_normalizer"])
         self.update_count = int(sd.get("update_count", 0))
+
+
+# --------------------------------------------------------------------------- #
+# Warmup-cosine-decay learning-rate scheduler                                  #
+# --------------------------------------------------------------------------- #
+class _WarmupCosineDecay:
+    """Linear warmup then cosine decay to end_value."""
+
+    def __init__(self, peak_lr, end_lr, warmup_steps, total_steps):
+        self.peak_lr = peak_lr
+        self.end_lr = end_lr
+        self.warmup_steps = max(1, warmup_steps)
+        self.total_steps = max(1, total_steps)
+        self.step_count = 0
+
+    def get_lr(self):
+        s = self.step_count
+        if s < self.warmup_steps:
+            return self.peak_lr * (s + 1) / self.warmup_steps
+        progress = min(1.0, (s - self.warmup_steps) / max(1, self.total_steps - self.warmup_steps))
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return self.end_lr + (self.peak_lr - self.end_lr) * cosine
+
+    def step(self, optimizer):
+        self.step_count += 1
+        lr = self.get_lr()
+        for pg in optimizer.param_groups:
+            pg["lr"] = lr

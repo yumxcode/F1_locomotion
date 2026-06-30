@@ -7,13 +7,14 @@
 #     rsl_rl codebase of F1_locomotion.
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# Neural-network modules for the FlashSAC port.
-#   * RunningRewardNormalizer  : running mean/var reward normalization
-#   * DualHistoryTanhGaussianActor : tanh-squashed Gaussian policy that reuses
-#                                    the X1 "dual-history" feature extractor
-#                                    (state-estimator MLP + long-history 1D CNN)
-#   * DistributionalDoubleQCritic  : FlashSAC's hallmark categorical double-Q
-#                                    critic (N bins) with EMA target support
+# Neural-network modules for the FlashSAC port (aligned with original paper):
+#   * UnitRMSNorm            : feature-level RMS normalization
+#   * ResidualBlock          : residual MLP block (FlashSAC's architecture)
+#   * normalize_parameters   : weight-level RMS normalization after each step
+#   * Zeta noise helpers     : time-correlated exploration (FlashSAC's core)
+#   * RunningRewardNormalizer: running mean/var reward normalization
+#   * DualHistoryTanhGaussianActor : tanh-Gaussian policy with X1 dual-history
+#   * DistributionalDoubleQCritic  : categorical double-Q critic
 
 import math
 
@@ -23,15 +24,85 @@ import torch.nn.functional as F
 
 
 # --------------------------------------------------------------------------- #
+# UnitRMSNorm — feature normalization (used inside residual blocks)            #
+# --------------------------------------------------------------------------- #
+class UnitRMSNorm(nn.Module):
+    """Normalize features to unit RMS (paper: UnitRMSNorm)."""
+
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
+        return x * rms * self.scale
+
+
+# --------------------------------------------------------------------------- #
+# ResidualBlock — FlashSAC's building block                                    #
+# --------------------------------------------------------------------------- #
+class ResidualBlock(nn.Module):
+    """Pre-activation residual block with ELU activation."""
+
+    def __init__(self, dim):
+        super().__init__()
+        self.fc1 = nn.Linear(dim, dim)
+        self.fc2 = nn.Linear(dim, dim)
+        self.norm = UnitRMSNorm(dim)
+
+    def forward(self, x):
+        h = F.elu(x)
+        h = self.fc1(h)
+        h = F.elu(h)
+        h = self.fc2(h)
+        return self.norm(x + h)
+
+
+# --------------------------------------------------------------------------- #
+# Weight normalization — applied after every optimizer step                   #
+# --------------------------------------------------------------------------- #
+def normalize_parameters(module: nn.Module):
+    """Apply unit-RMS weight normalization to all Linear/Conv layers.
+
+    After every optimizer step, each weight tensor w is rescaled so that
+    RMS(w) = 1, i.e. w ← w / sqrt(mean(w²) + eps). This is FlashSAC's explicit
+    norm bounding that prevents off-policy bootstrapping error accumulation.
+    """
+    with torch.no_grad():
+        for m in module.modules():
+            if isinstance(m, (nn.Linear, nn.Conv1d)):
+                rms = m.weight.data.pow(2).mean().add(1e-6).rsqrt()
+                m.weight.data.mul_(rms)
+
+
+# --------------------------------------------------------------------------- #
+# Zeta-distribution action-noise repetition (time-correlated exploration)      #
+# --------------------------------------------------------------------------- #
+def build_zeta_cdf(mu: float = 2.0, max_n: int = 16) -> torch.Tensor:
+    """Build truncated zeta distribution CDF.
+
+    Samples how many consecutive steps the same noise vector persists.
+    mu=2.0 → n=1 most likely (~61%), decreasing for larger n.
+    """
+    ns = torch.arange(1, max_n + 1, dtype=torch.float32)
+    pmf = ns.pow(-mu)
+    pmf = pmf / pmf.sum()
+    return torch.cumsum(pmf, dim=0)
+
+
+def sample_zeta_n(cdf: torch.Tensor, batch_size: int, device) -> torch.Tensor:
+    """Sample n (noise persistence length) for each env from the zeta CDF."""
+    u = torch.rand(batch_size, device=device)
+    idx = (u.unsqueeze(-1) < cdf.unsqueeze(0).to(device)).float().argmax(dim=-1)
+    return (idx + 1).long()
+
+
+# --------------------------------------------------------------------------- #
 # Reward normalization (global running mean / variance, Welford batch update)  #
 # --------------------------------------------------------------------------- #
 class RunningRewardNormalizer:
-    """Maintain running mean/var of rewards and rescale them.
-
-    Mirrors FlashSAC's reward normalizer: rewards are divided by the running
-    standard deviation so that the categorical value support
-    ``[-normalized_G_max, +normalized_G_max]`` stays well scaled.
-    """
+    """Maintain running mean/var of rewards and rescale them."""
 
     def __init__(self, normalized_G_max=5.0, eps=1e-6, device="cpu"):
         self.normalized_G_max = float(normalized_G_max)
@@ -43,14 +114,12 @@ class RunningRewardNormalizer:
 
     @torch.no_grad()
     def update(self, reward: torch.Tensor):
-        """Update running stats from a batch of (raw) rewards."""
         r = reward.detach().to(self.device).reshape(-1)
         if r.numel() == 0:
             return
         batch_mean = r.mean()
         batch_var = r.var(unbiased=False)
         batch_count = float(r.numel())
-
         delta = batch_mean - self.mean
         tot = self.count + batch_count
         new_mean = self.mean + delta * (batch_count / tot)
@@ -78,36 +147,42 @@ class RunningRewardNormalizer:
 
 
 # --------------------------------------------------------------------------- #
-# Tanh-squashed Gaussian actor with the X1 "dual-history" feature extractor     #
+# Helper: build a residual MLP head                                            #
+# --------------------------------------------------------------------------- #
+def _build_residual_head(input_dim, hidden_dim, output_dim, num_blocks, activation=None):
+    """Linear(input→hidden) → N× ResidualBlock(hidden) → Linear(hidden→output)."""
+    if activation is None:
+        activation = nn.ELU()
+    layers = [nn.Linear(input_dim, hidden_dim), activation]
+    for _ in range(num_blocks):
+        layers.append(ResidualBlock(hidden_dim))
+    layers.append(nn.Linear(hidden_dim, output_dim))
+    return nn.Sequential(*layers)
+
+
+# --------------------------------------------------------------------------- #
+# Tanh-squashed Gaussian actor with X1 dual-history feature extractor          #
 # --------------------------------------------------------------------------- #
 class DualHistoryTanhGaussianActor(nn.Module):
-    """SAC actor for the X1 biped.
+    """SAC actor for X1 with residual-block policy head (FlashSAC-aligned).
 
-    Preserves the observation pipeline of the original ``ActorCriticDH``:
-      actor_obs  ->  [ short_history | state_estimator(short_history) |
-                       long_history_CNN(actor_obs) ]  -> mean / log_std heads
-    but emits a *tanh-squashed Gaussian* distribution (the SAC requirement)
-    instead of the unbounded Gaussian used by PPO.
-
-    Observation layout for X1 (see X1DHStandCfg):
-      * num_obs         = frame_stack * num_single_obs            (full actor obs)
-      * num_short_obs   = short_frame_stack * num_single_obs      (tail slice)
-      * num_proprio_obs = num_single_obs                          (CNN time dim)
-      * in_channels     = frame_stack                             (CNN channels)
+    Preserves the X1 dual-history pipeline:
+      actor_obs → [ short_history | state_estimator(short) | long_history_CNN ] → residual head
     """
 
     def __init__(self,
                  num_short_obs: int,
                  num_proprio_obs: int,
                  num_actions: int,
-                 actor_hidden_dims=(512, 256, 128),
-                 state_estimator_hidden_dims=(256, 128, 64),
+                 actor_hidden_dims=(128,),
+                 state_estimator_hidden_dims=(128, 64),
                  in_channels=66,
                  kernel_size=(6, 4),
                  filter_size=(32, 16),
                  stride_size=(3, 2),
                  lh_output_dim=64,
                  init_noise_std=1.0,
+                 actor_num_blocks=2,
                  log_std_min=-5.0,
                  log_std_max=2.0,
                  activation=None,
@@ -157,17 +232,16 @@ class DualHistoryTanhGaussianActor(nn.Module):
         lh_layers.append(nn.Linear(128, lh_output_dim))
         self.long_history = nn.Sequential(*lh_layers)
 
-        # ---- mean head ----
+        # ---- mean head: residual blocks (FlashSAC-aligned) ----
         feat_dim = self.num_short_obs + 3 + lh_output_dim
-        mean_layers = [nn.Linear(feat_dim, actor_hidden_dims[0]), activation]
-        for l in range(len(actor_hidden_dims)):
-            if l == len(actor_hidden_dims) - 1:
-                mean_layers.append(nn.Linear(actor_hidden_dims[l], self.num_actions))
-            else:
-                mean_layers.append(nn.Linear(actor_hidden_dims[l],
-                                             actor_hidden_dims[l + 1]))
-                mean_layers.append(activation)
-        self.mean_net = nn.Sequential(*mean_layers)
+        actor_hidden_dim = actor_hidden_dims[0] if isinstance(actor_hidden_dims, (list, tuple)) else actor_hidden_dims
+        self.mean_net = _build_residual_head(
+            input_dim=feat_dim,
+            hidden_dim=actor_hidden_dim,
+            output_dim=self.num_actions,
+            num_blocks=actor_num_blocks,
+            activation=activation,
+        )
 
         # learnable per-dimension log-std
         init_log_std = math.log(max(init_noise_std, 1e-3))
@@ -191,44 +265,38 @@ class DualHistoryTanhGaussianActor(nn.Module):
         std = log_std.exp()
         normal = torch.distributions.Normal(mean, std)
 
-        x_t = mean if deterministic else normal.rsample()  # reparameterized
+        x_t = mean if deterministic else normal.rsample()
         action = torch.tanh(x_t)
 
         log_prob = None
         if with_logprob:
             lp = normal.log_prob(x_t).sum(dim=-1, keepdim=True)
-            # tanh correction (numerically stable)
             corr = (2.0 * (math.log(2.0) - x_t - F.softplus(-2.0 * x_t))).sum(dim=-1, keepdim=True)
             log_prob = lp - corr
         return action, log_prob, mean
 
     @torch.no_grad()
     def act_inference(self, obs):
-        """Deterministic deployment action (tanh(mean)). JIT-export friendly."""
+        """Deterministic deployment action (tanh(mean))."""
         mean, _ = self.get_mean_logstd(obs)
         return torch.tanh(mean)
 
 
 # --------------------------------------------------------------------------- #
-# Distributional categorical double-Q critic (FlashSAC hallmark)               #
+# Distributional categorical double-Q critic (FlashSAC-aligned residual arch)  #
 # --------------------------------------------------------------------------- #
 class DistributionalDoubleQCritic(nn.Module):
-    """Double-Q critic that predicts a categorical distribution over a value
-    support ``[v_min, v_max]`` with ``num_bins`` atoms.
-
-    Inputs are the *privileged* critic observation and the action. Two Q-heads
-    (clipped double-Q) are computed in parallel. The expected value is the
-    mean of the categorical distribution.
-    """
+    """Double-Q critic predicting categorical distribution over value support."""
 
     def __init__(self,
                  num_critic_obs: int,
                  num_actions: int,
-                 critic_hidden_dims=(768, 256, 128),
+                 critic_hidden_dims=(256,),
                  num_bins=101,
                  v_min=-5.0,
                  v_max=5.0,
                  num_qs=2,
+                 critic_num_blocks=2,
                  activation=None,
                  **kwargs):
         super().__init__()
@@ -245,28 +313,23 @@ class DistributionalDoubleQCritic(nn.Module):
         self.delta = (self.v_max - self.v_min) / (self.num_bins - 1)
         self.register_buffer("support", torch.linspace(self.v_min, self.v_max, self.num_bins))
 
+        critic_hidden_dim = critic_hidden_dims[0] if isinstance(critic_hidden_dims, (list, tuple)) else critic_hidden_dims
         self.qs = nn.ModuleList([
-            self._build(num_critic_obs, num_actions, critic_hidden_dims, activation)
+            _build_residual_head(
+                input_dim=num_critic_obs + num_actions,
+                hidden_dim=critic_hidden_dim,
+                output_dim=self.num_bins,
+                num_blocks=critic_num_blocks,
+                activation=activation,
+            )
             for _ in range(self.num_qs)
         ])
 
-    def _build(self, dc, da, dims, act):
-        layers = [nn.Linear(dc + da, dims[0]), act]
-        for l in range(len(dims)):
-            if l == len(dims) - 1:
-                layers.append(nn.Linear(dims[l], self.num_bins))
-            else:
-                layers.append(nn.Linear(dims[l], dims[l + 1]))
-                layers.append(act)
-        return nn.Sequential(*layers)
-
     def logits(self, critic_obs, action):
-        """Return a list of [B, num_bins] logits, one per Q-head."""
         x = torch.cat([critic_obs, action], dim=-1)
         return [q(x) for q in self.qs]
 
     def expected_values(self, critic_obs, action):
-        """Return a list of [B, 1] expected values (mean of each distribution)."""
         out = []
         for lg in self.logits(critic_obs, action):
             probs = F.softmax(lg, dim=-1)
@@ -281,19 +344,7 @@ class DistributionalDoubleQCritic(nn.Module):
 @torch.no_grad()
 def categorical_td_target(reward, done, next_value, support, v_min, v_max,
                           num_bins, gamma_n, device):
-    """Project scalar bootstrap targets onto the categorical value support.
-
-    target atom value:  Tz = reward + gamma_n * (1 - done) * next_value
-    Each sample carries unit mass placed at its (clamped) Tz and distributed
-    between the two neighbouring bins (C51 projection).
-
-    Args:
-        reward:     [B, 1]
-        done:       [B, 1]  (1 => true terminal, no bootstrap)
-        next_value: [B, 1]  (target-critic value minus alpha*entropy)
-    Returns:
-        [B, num_bins] target probability distribution.
-    """
+    """Project scalar bootstrap targets onto the categorical value support (C51)."""
     reward = reward.reshape(-1)
     done = done.reshape(-1)
     next_value = next_value.reshape(-1)
@@ -301,7 +352,7 @@ def categorical_td_target(reward, done, next_value, support, v_min, v_max,
     delta = (v_max - v_min) / (num_bins - 1)
     Tz = reward + gamma_n * (1.0 - done) * next_value
     Tz = Tz.clamp(v_min, v_max)
-    b = (Tz - v_min) / delta                       # [B] fractional bin index
+    b = (Tz - v_min) / delta
     l = b.floor().long().clamp(0, num_bins - 1)
     u = b.ceil().long().clamp(0, num_bins - 1)
 
@@ -314,7 +365,6 @@ def categorical_td_target(reward, done, next_value, support, v_min, v_max,
     proj[idx, l] += lower_w
     proj[idx, u] += upper_w
 
-    # integer-bin edge case: place full mass on the single bin
     both = (l == u)
     if both.any():
         proj[idx[both], l[both]] = 1.0
