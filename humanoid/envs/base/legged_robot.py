@@ -206,11 +206,13 @@ class LeggedRobot(BaseTask):
     def check_termination(self):
         """ Check if environments need to be reset
         """
-        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
+        contact_threshold = getattr(self.cfg.asset, 'termination_contact_threshold', 1.0)
+        roll_pitch_threshold = getattr(self.cfg.asset, 'roll_pitch_threshold', 1.5)
+        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > contact_threshold, dim=1)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         
-        roll_cutoff = torch.abs(self.base_euler_xyz[:,0]) > 1.5
-        pitch_cutoff = torch.abs(self.base_euler_xyz[:,1]) > 1.5
+        roll_cutoff = torch.abs(self.base_euler_xyz[:,0]) > roll_pitch_threshold
+        pitch_cutoff = torch.abs(self.base_euler_xyz[:,1]) > roll_pitch_threshold
 
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= roll_cutoff

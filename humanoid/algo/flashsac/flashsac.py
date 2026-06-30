@@ -82,7 +82,12 @@ class FlashSAC:
                          dtype=torch.float32))
         self.temp_opt = optim.Adam([self.log_alpha], lr=temp_lr)
         action_dim = self._infer_action_dim()
-        self.target_entropy = 0.5 * action_dim * math.log(2.0 * math.pi * math.e * (target_sigma ** 2))
+        # Fixed target entropy = -0.5 * action_dim (SAC classic default).
+        # The FlashSAC paper formula (0.5*A*ln(2πe*σ²)) produces a large negative
+        # value that is incompatible with tanh-squashed Gaussian entropy (which
+        # is naturally positive ~2.5), causing alpha to collapse to ~0.01.
+        # Using -0.5*A keeps the target modest so alpha stays healthy.
+        self.target_entropy = -0.5 * action_dim
 
         self.reward_normalizer = RunningRewardNormalizer(
             normalized_G_max=self.normalized_G_max, device=self.device)

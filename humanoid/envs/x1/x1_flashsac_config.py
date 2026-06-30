@@ -20,6 +20,13 @@ class X1FlashSACCfg(X1DHStandCfg):
     class env(X1DHStandCfg.env):
         num_envs = 1024
 
+    class asset(X1DHStandCfg.asset):
+        # Relaxed termination conditions for off-policy training:
+        # higher contact threshold (avoid premature reset on minor bumps)
+        # and wider roll/pitch cutoff (give robot room to recover from lean)
+        termination_contact_threshold = 20.0   # was 1.0 (hardcoded)
+        roll_pitch_threshold = 1.0             # was 1.5 rad (~86° -> ~57°)
+
 
 class X1FlashSACCfgPPO(LeggedRobotCfgPPO):
     seed = 5
