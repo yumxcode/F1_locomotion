@@ -58,8 +58,10 @@ class X1FlashSACCfgPPO(LeggedRobotCfgPPO):
         normalized_G_max = 5.0           # value support bound (+/-)
         normalize_reward = True
         # ---- replay buffer ----
-        buffer_max_length = 2_000_000
-        buffer_min_length = 20_000
+        # obs_dim=3102 (66 frames * 47), so 200k transitions ~ 2.3GB on GPU;
+        # 2M would need ~23GB and OOM on a 24G card.
+        buffer_max_length = 200_000
+        buffer_min_length = 4_000
         # ---- update cadence ----
         batch_size = 2048
         updates_per_interaction_step = 2     # gradient updates per env step
