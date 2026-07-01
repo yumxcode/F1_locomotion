@@ -82,12 +82,12 @@ class FlashSAC:
         # any negative target_entropy drives alpha → 0 in ~1000 steps.
         # Fix: use a FIXED alpha (no gradient on log_alpha) when auto_alpha=False.
         self.auto_alpha = bool(auto_alpha)
+        action_dim = self._infer_action_dim()
         self.log_alpha = torch.nn.Parameter(
             torch.tensor(math.log(max(init_alpha, 1e-6)), device=self.device,
                          dtype=torch.float32))
         if self.auto_alpha:
             self.temp_opt = optim.Adam([self.log_alpha], lr=temp_lr)
-            action_dim = self._infer_action_dim()
             self.target_entropy = -0.5 * action_dim
         else:
             self.temp_opt = None
