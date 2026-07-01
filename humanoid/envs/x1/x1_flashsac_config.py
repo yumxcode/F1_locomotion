@@ -52,7 +52,8 @@ class X1FlashSACCfgPPO(LeggedRobotCfgPPO):
         actor_lr = 3e-4
         critic_lr = 3e-4
         temp_lr = 1e-4
-        init_alpha = 0.2
+        init_alpha = 0.1
+        auto_alpha = False              # fixed alpha — auto-tuning collapses on 12-DoF
         target_sigma = 0.3
         actor_update_period = 2
         max_grad_norm = 1.0

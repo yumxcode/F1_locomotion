@@ -36,7 +36,8 @@ class FlashSAC:
                  temp_lr=3e-4,
                  lr_warmup_steps=1000,
                  lr_total_steps=50000,
-                 init_alpha=0.2,
+                 init_alpha=0.1,
+                 auto_alpha=False,
                  target_sigma=0.3,
                  actor_update_period=2,
                  max_grad_norm=1.0,
@@ -76,18 +77,21 @@ class FlashSAC:
         self.critic_scheduler = _WarmupCosineDecay(critic_lr, critic_lr * 0.5,
                                                     lr_warmup_steps, lr_total_steps)
 
-        # ---- entropy temperature (auto-tuned) ----
+        # ---- entropy temperature ----
+        # Alpha auto-tuning consistently collapses on 12-DoF tanh-Gaussian:
+        # any negative target_entropy drives alpha → 0 in ~1000 steps.
+        # Fix: use a FIXED alpha (no gradient on log_alpha) when auto_alpha=False.
+        self.auto_alpha = bool(auto_alpha)
         self.log_alpha = torch.nn.Parameter(
             torch.tensor(math.log(max(init_alpha, 1e-6)), device=self.device,
                          dtype=torch.float32))
-        self.temp_opt = optim.Adam([self.log_alpha], lr=temp_lr)
-        action_dim = self._infer_action_dim()
-        # Fixed target entropy = -0.5 * action_dim (SAC classic default).
-        # The FlashSAC paper formula (0.5*A*ln(2πe*σ²)) produces a large negative
-        # value that is incompatible with tanh-squashed Gaussian entropy (which
-        # is naturally positive ~2.5), causing alpha to collapse to ~0.01.
-        # Using -0.5*A keeps the target modest so alpha stays healthy.
-        self.target_entropy = -0.5 * action_dim
+        if self.auto_alpha:
+            self.temp_opt = optim.Adam([self.log_alpha], lr=temp_lr)
+            action_dim = self._infer_action_dim()
+            self.target_entropy = -0.5 * action_dim
+        else:
+            self.temp_opt = None
+            self.log_alpha.requires_grad_(False)
 
         self.reward_normalizer = RunningRewardNormalizer(
             normalized_G_max=self.normalized_G_max, device=self.device)
@@ -219,16 +223,22 @@ class FlashSAC:
             info["actor_loss"] = self._last_actor_loss
 
         # --------------------------- temperature -------------------------- #
-        if actor_log_prob is None:
-            with torch.no_grad():
-                _, actor_log_prob, _ = self.actor(obs)
-        alpha_loss = -(self.log_alpha * (actor_log_prob.detach() + self.target_entropy)).mean()
-        self.temp_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
-        self.temp_opt.step()
-        info["alpha_loss"] = float(alpha_loss.item())
+        if self.auto_alpha:
+            if actor_log_prob is None:
+                with torch.no_grad():
+                    _, actor_log_prob, _ = self.actor(obs)
+            alpha_loss = -(self.log_alpha * (actor_log_prob.detach() + self.target_entropy)).mean()
+            self.temp_opt.zero_grad(set_to_none=True)
+            alpha_loss.backward()
+            self.temp_opt.step()
+            info["alpha_loss"] = float(alpha_loss.item())
+        else:
+            info["alpha_loss"] = 0.0
         info["alpha"] = float(self.alpha.item())
-        info["entropy"] = float((-actor_log_prob).mean().item())
+        if actor_log_prob is not None:
+            info["entropy"] = float((-actor_log_prob).mean().item())
+        else:
+            info["entropy"] = 0.0
 
         # --------------------------- target EMA --------------------------- #
         with torch.no_grad():
