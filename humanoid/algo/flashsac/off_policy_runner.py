@@ -310,7 +310,7 @@ class FlashSACOffPolicyRunner:
                 log_alpha=self.alg.log_alpha.detach().cpu(),
                 actor_opt=self.alg.actor_opt.state_dict(),
                 critic_opt=self.alg.critic_opt.state_dict(),
-                temp_opt=self.alg.temp_opt.state_dict(),
+                temp_opt=self.alg.temp_opt.state_dict() if self.alg.temp_opt is not None else None,
                 reward_normalizer=self.alg.reward_normalizer.state_dict(),
                 update_count=self.alg.update_count,
                 iter=self.it,

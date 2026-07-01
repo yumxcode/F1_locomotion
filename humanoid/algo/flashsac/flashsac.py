@@ -261,7 +261,7 @@ class FlashSAC:
             log_alpha=self.log_alpha.detach().cpu(),
             actor_opt=self.actor_opt.state_dict(),
             critic_opt=self.critic_opt.state_dict(),
-            temp_opt=self.temp_opt.state_dict(),
+            temp_opt=self.temp_opt.state_dict() if self.temp_opt is not None else None,
             reward_normalizer=self.reward_normalizer.state_dict(),
             update_count=self.update_count,
         )
@@ -275,7 +275,7 @@ class FlashSAC:
         if load_optimizer:
             self.actor_opt.load_state_dict(sd["actor_opt"])
             self.critic_opt.load_state_dict(sd["critic_opt"])
-            self.temp_opt.load_state_dict(sd["temp_opt"])
+            self.temp_opt.load_state_dict(sd["temp_opt"]) if self.temp_opt is not None and sd.get("temp_opt") else None
         self.reward_normalizer.load_state_dict(sd["reward_normalizer"])
         self.update_count = int(sd.get("update_count", 0))
 
