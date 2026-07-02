@@ -72,7 +72,7 @@ x1_dh_stand_config.py 的 class scales 残留了 V13 之后的真实迭代痕迹
 | **single_foot_contact 原始权重失效** | single_foot_contact = 0.8 (V13c: 1.0→0.8, 二值 reward 密度修正后与 tracking 平衡) | line 361 | design 写 0.3，实际经历过 0.3→1.0→0.8——说明 design 值根本不足以驱动涌现。 |
 | **探索不稳定** | entropy_coef = 0.003 (V13d: 0.001→0.003, 恢复探索; V13c 0.001→noise_std 0.34 冻结; V13b 0.005→4.69 暴涨) | line 411 | "最小涌现"对 entropy 极度敏感（0.001 冻结 / 0.005 暴涨），并非"最小"。 |
 
-**关键推论（来自 line 333 注释）**：扭胯步态在 single_foot_contact 上得 **1.0 满分**，正常行走也得 1.0——**single_foot_contact 对两者零区分度**。真正把策略从扭胯里拉出来的是 tracking_sigma 0.25→0.15 的收紧。换言之，H1（"一个简单单脚接触检测就够了"）在 X1 上**已被自身的迭代实践否定**：决定步态质量的是 tracking 的工程化调参，不是 single_foot_contact。
+**关键推论（来自 line 333 注释）**：扭胯步态在 single_foot_contact 上得 **1.0 满分**，正常行走也得 1.0——**single_foot_contact 对两者零区分度**。真正把策略从扭胯里拉出来的是 tracking_sigma 0.25→0.15 的收紧——而注释中的 0.81/1.0 正是 **tracking_lin_vel 取值**（exp 形式 0–1）：即扭胯步态仍能拿 0.81 的速度跟踪分、在 single_foot_contact 上又拿满分，故唯一可用的选择信号只剩 tracking 的 σ。换言之，H1（"一个简单单脚接触检测就够了"）在 X1 上**已被自身的迭代实践否定**：决定步态质量的是 tracking 的工程化调参，不是 single_foot_contact——一个对所有步态都给满分的 reward 项，**结构上无法充当选择信号**。
 
 ### 3.2 系统性漂移：design 文档值 ≠ 实际 config 值
 
@@ -206,4 +206,5 @@ check_termination（legged_robot.py:206-223）在 root z < 0.35 m 时复位。�
 - 终止条件与蹲走存活的交互（§4.3）未能从 V13c git 历史完全确认机制，已标注为"需进一步确认"。
 
 _分析人: Meta-Agent (exploration refutation)_
+_复核 (2026-07-02 read-only re-verify): 全部证据已据源码逐条核对 —— self.dt = 0.01 s（100 Hz）@legged_robot.py:1270（纠正 design §4.3 的"50 Hz"）；reward×dt @:999；height 终止 0.35 m @:223；contact 阈值 5.0 N @env:891；9 份 gait CSV 表头均无 V13 reward 列。H1 状态确认为"部分证伪，待 C1（V13 gait replay）终判"。_
 _状态: H1 判定为"部分证伪"，建议执行 C1（V13 gait replay）做终判_
