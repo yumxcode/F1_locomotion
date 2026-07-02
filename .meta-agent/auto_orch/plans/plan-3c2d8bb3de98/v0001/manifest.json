@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "planId": "plan-3c2d8bb3de98",
+  "version": 1,
+  "goalHash": "3c2d8bb3de98246d25df6763f94490b3135f26f03998a6181e8bafcc05acb69a",
+  "goalPreview": "目标：人形机器人行走控制开发是一个长周期自主研究任务，目标是建立可重复迭代的工作流。���轮都要围绕\n  task_spec.md 推进研究，产出可验证 findings，并更新标准 state 文件。\n\n  请按以下协议设计图：\n\n  1. 状态目录\n  任务状态放在 {taskDir}/state/：\n  - task_spec.md：目标、里程碑、成功标准\n  - progress.json：至少包含 iteration、status、stale_count、\n  total_findings、updated_at\n  - findings.jsonl：append-only，记录每轮新增 findings\n  - directions_tried.json：记录已尝试方向\n  - iteration_log.jsonl：append-only，记录每轮摘要、判断和路由\n\n  日志放在 {taskDir}/logs/：\n  - work.jsonl\n  - orchestrator.jsonl\n\n  2. 每轮 loop\n  图中至少包含这些阶段：\n  - load_state：",
+  "source": "planner",
+  "approvedByUser": true,
+  "approvedAt": 1782981435339,
+  "note": "accepted on attempt 2",
+  "materializedAt": 1782982024664,
+  "latestRunAt": 1782984464634
+}
