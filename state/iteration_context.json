@@ -1,0 +1,101 @@
+{
+  "generated_at": "2026-07-02T06:44:04Z",
+  "source_files": {
+    "task_spec": "state/task_spec.md",
+    "progress": "state/progress.json",
+    "directions_tried": "state/directions_tried.json",
+    "findings": "state/findings.jsonl"
+  },
+  "iteration": {
+    "current": 0,
+    "status": "healthy",
+    "stale_count": 0,
+    "healthy_streak": 0,
+    "total_findings": 0,
+    "last_direction": null,
+    "last_metric": null
+  },
+  "phase_assessment": "COLD-START BOOTSTRAP. progress.json and directions_tried.json are at initial values (iteration 0, empty). findings.jsonl is empty (0 lines). The orchestrator loop has not yet recorded any iteration, finding, or pivot. All state files were initialized 2026-07-02.",
+  "task": {
+    "goal": "Train X1 bipedal humanoid (12 DOF) to robust omnidirectional walking and standing via PPO (DHPPO), using minimal reward design (V13 'Minimal Emergence') that produces emergent alternating gait.",
+    "core_hypothesis": "A single physical contact constraint (single_foot_contact, reward when exactly 1 foot touches ground) is sufficient to make the policy abandon hopping and self-emerge alternating gait -- without gait clocks, reference trajectories, or symmetry penalties.",
+    "design_version": "V13 Minimal Emergence (based on van Marum et al. 2024, Digit robot)",
+    "platform": "Isaac Gym preview-4, 1x4090D (ESKU000001), image BJX00000001 v V000124",
+    "reward_summary": "8 terms, 3 tiers. (1) Task: tracking_lin_vel x1.0 | tracking_ang_vel x0.5 | orientation x0.5 | base_height x0.2 (h-star=0.61 m) | torque x0.01. (2) Gait emergence: single_foot_contact x0.3 (n_contact==1, 0.2 s grace) | feet_airtime x0.3 (target 0.4 s). (3) Safety hard constraint: dof_pos_limits x-10.0."
+  },
+  "directions_tried": {
+    "directions": [],
+    "pivots": [],
+    "note": "No directions tried yet in this orchestrator session. Note: design history V10-V12 Schumacher route was already proven infeasible BEFORE this bootstrap; do not re-propose -- see known_dead_ends_do_not_repropose."
+  },
+  "recent_findings": [],
+  "findings_note": "findings.jsonl is empty (0 entries). No recent findings to report.",
+  "milestones": {
+    "M1": {
+      "name": "V13 training and gait-emergence validation",
+      "status": "IN-PROGRESS",
+      "detail": "Task TASK_20260612_050, commit 1be71f8, branch v9-smooth-landing. Early signal: iter 4 mean_reward 0.71 -> 1.06, all reward terms show effective gradients."
+    },
+    "M2": {
+      "name": "Reward ablation and hyperparameter tuning (tune stage)",
+      "status": "PENDING",
+      "detail": "Ablation plan: single_foot_contact scale [0.1,0.3,0.5], feet_airtime threshold [0.2,0.4,0.6] s, tracking scale [0.5,1.0,1.5]."
+    },
+    "M3": {
+      "name": "Best-policy selection and final test evaluation",
+      "status": "PENDING"
+    },
+    "M4": {
+      "name": "Sim-to-real and hardware validation (deploy stage)",
+      "status": "PENDING",
+      "detail": "Highest risk (sim-to-real gap)."
+    }
+  },
+  "active_external_work": {
+    "task_id": "TASK_20260612_050",
+    "type": "training",
+    "status": "IN-PROGRESS (per task_spec milestone M1)",
+    "commit": "1be71f8",
+    "branch": "v9-smooth-landing",
+    "note": "An active training task is referenced in task_spec.md. progress.json has not yet recorded any metric from it. Downstream should verify task status via 'gm task info' and record findings when results land."
+  },
+  "decision_branches_after_M1": [
+    {
+      "condition": "Gait emerges and normal walking",
+      "action": "success -> proceed to tune stage (M2)"
+    },
+    {
+      "condition": "Gait emerges but cadence too fast",
+      "action": "raise airtime_threshold to 0.6 s"
+    },
+    {
+      "condition": "Still hopping (no single-foot contact)",
+      "action": "raise single_foot_contact scale to 0.5"
+    },
+    {
+      "condition": "Frequent falling",
+      "action": "raise orientation scale to 1.0"
+    },
+    {
+      "condition": "Gait OK but excessive torque",
+      "action": "add back foot_slip or raise torque scale"
+    }
+  ],
+  "known_dead_ends_do_not_repropose": [
+    "CoT efficiency tau-dot-q (sign-cancelling)",
+    "walk_decay",
+    "efficiency too weak (-8e-9)",
+    "efficiency dominant (-0.02)",
+    "swing_foot_forward unbounded",
+    "sigma too small (0.08)",
+    "tracking weight too high (2.5)",
+    "efficiency-vs-landing vs tracking conflict",
+    "symmetry (energy-phase and mirror)",
+    "Schumacher three-piece route (V10-V12)"
+  ],
+  "next_actions": [
+    "Confirm TASK_20260612_050 training status via 'gm task info' (in-progress external work).",
+    "If results not yet landed, pause via auto_orch_pause_external awaiting training result.",
+    "On result arrival, record gait, standing, and tracking metrics into findings.jsonl and update progress.json."
+  ]
+}
