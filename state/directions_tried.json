@@ -1,0 +1,31 @@
+{
+  "directions": [
+    { "id": "D001", "name": "CoT 能效 |τ·q̇|", "status": "failed", "version": "V2", "category": "efficiency", "evidence": "对符号敏感，正负力矩抵消，训练崩溃" },
+    { "id": "D002", "name": "efficiency τ² -8e-9", "status": "failed", "version": "V3-V10", "category": "efficiency", "evidence": "太弱，拖脚走无惩罚" },
+    { "id": "D003", "name": "efficiency 主导 -0.02", "status": "failed", "version": "V2", "category": "efficiency", "evidence": "压制一切运动，策略不动" },
+    { "id": "D004", "name": "walk_decay", "status": "failed", "version": "V5", "category": "control", "evidence": "衰减 stability 导致姿态崩溃 stability→0" },
+    { "id": "D005", "name": "swing_foot_forward 无上限", "status": "failed", "version": "V6", "category": "gait", "evidence": "线性增长碾压 stability" },
+    { "id": "D006", "name": "tracking_sigma 过小 0.08", "status": "failed", "version": "V11", "category": "tracking", "evidence": "初始误差在梯度死区，tracking≈0" },
+    { "id": "D007", "name": "tracking 权重过高 2.5", "status": "failed", "version": "V11-c", "category": "tracking", "evidence": "压制其他 reward 梯度，surrogate≈0" },
+    { "id": "D008", "name": "efficiency/landing 与 tracking 方向冲突", "status": "failed", "version": "V11-c", "category": "conflict", "evidence": "方向对抗导致正反馈循环，reward 横盘" },
+    { "id": "D009", "name": "symmetry (energy-phase)", "status": "failed", "version": "V15", "category": "symmetry", "evidence": "只查能量平衡，split stance 得高分 split=0.876" },
+    { "id": "D010", "name": "symmetry (mirror morphological)", "status": "failed", "version": "V16", "category": "symmetry", "evidence": "逻辑正确但整体方向冲突仍存在，仍扭胯" },
+    { "id": "D011", "name": "symmetry (mirror diff)", "status": "failed", "version": "V12/V14", "category": "symmetry", "evidence": "reward-based symmetry 4 版全失败" },
+    { "id": "D012", "name": "Schumacher 三件套整体路线 (efficiency+pain)", "status": "failed", "version": "V10-V12", "category": "paradigm", "evidence": "方向冲突不可调和，6 轮失败" },
+    { "id": "D013", "name": "landing_impact (GRF threshold)", "status": "failed", "version": "V8-V11-c", "category": "landing", "evidence": "与 tracking 冲突，移除" },
+    { "id": "D014", "name": "single_foot_contact (van Marum 涌现)", "status": "partial", "version": "V13e", "category": "emergence", "evidence": "涌现了交替接触但退化(蹲走/扭胯)；对扭胯零区分度，H1 部分证伪" }
+  ],
+  "candidates": [
+    { "id": "CAND01", "name": "髋 yaw / 腿外展正则化 (hip-yaw abduction penalty)", "priority": "P0", "scale_estimate": -0.08, "rationale": "零梯度冲突，直击扭胯 hack；左髋 yaw 峰值偏移 3.42 rad", "source": "exploration_investigation.md §2.1" },
+    { "id": "CAND02", "name": "feet_position / 站立宽度奖励", "priority": "P0", "scale_estimate": "-5 到 -10", "rationale": "从末端几何二次约束，与 CAND01 互补", "source": "exploration_investigation.md §2.2" },
+    { "id": "CAND03", "name": "V13 gait replay CSV 目视判定 C1", "priority": "P0", "scale_estimate": null, "rationale": "最低成本终判；确认是否真交替步态", "source": "exploration_refutation.md §6.2" },
+    { "id": "CAND04", "name": "消除 design↔config 权重漂移", "priority": "P0", "scale_estimate": null, "rationale": "config 实际值回写 design §2.2", "source": "exploration_refutation.md §6.2" },
+    { "id": "CAND05", "name": "自适应步频 gait clock (CPG-RL)", "priority": "P1", "scale_estimate": null, "rationale": "cycle_time 固定 0.9s 可能诱发扭胯；步态正常后上", "source": "exploration_investigation.md §2.4" },
+    { "id": "CAND06", "name": "步长/前迈足速奖励 (anti-shuffle)", "priority": "P1", "scale_estimate": null, "rationale": "最小步长门槛压制原地震荡+扭胯", "source": "exploration_investigation.md §2.3" },
+    { "id": "CAND07", "name": "action jerk 正则 (二阶平滑)", "priority": "P1", "scale_estimate": -1e-4, "rationale": "低成本保险，抑颤抖", "source": "exploration_investigation.md §2.6" },
+    { "id": "CAND08", "name": "质心角动量 CAM_z 正则", "priority": "P1", "scale_estimate": null, "rationale": "动力学层面镜像 CAND01", "source": "exploration_investigation.md §2.7" },
+    { "id": "CAND09", "name": "AMP/DeepMimic 运动先验", "priority": "P2", "scale_estimate": null, "rationale": "重武器，sim-to-real 自然性兜底", "source": "exploration_investigation.md §2.5" },
+    { "id": "CAND10", "name": "PBT 自动权重 curriculum", "priority": "P2", "scale_estimate": null, "rationale": "自动化找 scale，减少人工试错", "source": "exploration_investigation.md §2.10" }
+  ],
+  "note": "directions = 已尝试/已穷尽（勿重复）；candidates = 已提出但未试（迭代 1+ 的工作队列）。symmetry 类已 4 版失败，禁止从奖励角度再提。"
+}

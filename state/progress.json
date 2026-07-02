@@ -1,0 +1,19 @@
+{
+  "iteration": 0,
+  "status": "healthy",
+  "stale_count": 0,
+  "total_findings": 3,
+  "best_metric": null,
+  "best_metric_definition": "gait_twist_ratio = hip_yaw_amp / hip_pitch_amp (lower is better; success < 0.5; degenerate-twist baseline 2.0-3.0)",
+  "success_threshold": {
+    "gait_twist_ratio": "< 0.5",
+    "tracking_velocity_m_s": "> 0.3",
+    "single_foot_contact_mean": "> 0.8",
+    "episode_length_steps": "> 500",
+    "C1_alternating_gait_visually_confirmed": true
+  },
+  "current_milestone": "M0",
+  "baseline_config": "V13e (tracking 0.6 / single_foot_contact 0.8 / base_height 0.5 / sigma 0.15)",
+  "max_iterations": 10,
+  "updated_at": "2026-07-02T09:54:45Z"
+}
