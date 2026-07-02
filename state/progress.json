@@ -1,0 +1,10 @@
+{
+  "iteration": 0,
+  "status": "healthy",
+  "stale_count": 0,
+  "healthy_streak": 0,
+  "total_findings": 0,
+  "last_direction": null,
+  "last_metric": null,
+  "updated_at": "2026-07-02T06:44:04Z"
+}
