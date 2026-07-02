@@ -1,0 +1,3 @@
+{"event":"approved","at":1782985961117,"version":1,"approvedByUser":true,"source":"saved","note":"loaded saved plan plan-3c2d8bb3de98@v1"}
+{"event":"materialized","at":1782985961121,"version":1}
+{"event":"run","at":1782988246374,"version":1,"status":"failed","costUsd":0.742781118,"visitedPath":["init_state","load_state","explore","choose_direction","diversity_check","error_writer"],"note":"ENOENT: no such file or directory, open '/Users/yumx/code/robot_x/X1/agibot_x1_train_oma/.meta-agent/auto_orch/code_nodes/347c77d3deb20868c19c86fa5d28c4502aa045281c14f3077685eff3aaeba221.mjs'"}
