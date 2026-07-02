@@ -1,8 +1,0 @@
-{
-  "schemaVersion": "1.0",
-  "nodeId": "attention_report_writer",
-  "sourceHash": "7f19f4fe6c3b4bc42ec2139c1a63c9d1963d8c84e584b77ac780e59664e120c0",
-  "codeRef": "code_nodes/7f19f4fe6c3b4bc42ec2139c1a63c9d1963d8c84e584b77ac780e59664e120c0.mjs",
-  "createdAt": 1782972580550,
-  "note": "built-in report writer for attention_report_writer"
-}

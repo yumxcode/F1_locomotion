@@ -1,8 +1,0 @@
-{
-  "schemaVersion": "1.0",
-  "nodeId": "state_writer",
-  "sourceHash": "b4567d5c6a3fb44f85c3e9f30306f2e41cec016f4287b829fa76510c87ae2800",
-  "codeRef": "code_nodes/b4567d5c6a3fb44f85c3e9f30306f2e41cec016f4287b829fa76510c87ae2800.mjs",
-  "createdAt": 1782972394357,
-  "note": "The source exports `async function main(input, api)` per contract. All state I/O goes through api.state.readJson/writeJson/appendJsonl/readText. Timestamps use api.nowIso exclusively (no Date.now/new Date). True temp+rename atomicity is delegated to the platform's writeJson implementation since no rename primitive is exposed in the api surface; the write order is designed so that directions_tried.json is committed before progress.json, and pivot_plan.json is cleared last — minimizing the window of partial state on crash. Missing required inputs or any thrown exception returns label 'error' with a descriptive note; full success returns label 'written'."
-}

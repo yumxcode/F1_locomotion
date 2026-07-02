@@ -1,8 +1,0 @@
-{
-  "schemaVersion": "1.0",
-  "nodeId": "reduce_progress",
-  "sourceHash": "dd97cdf4b960fae9d0920446205acd106c40bff596102ff3d630129ab0c14c11",
-  "codeRef": "code_nodes/dd97cdf4b960fae9d0920446205acd106c40bff596102ff3d630129ab0c14c11.mjs",
-  "createdAt": 1782971965639,
-  "note": "Deterministic progress reducer: reads progress.json + iteration_eval.json (relative to input.taskDir), adjusts stale_count per (new_findings_count<=0 || metric_delta<0), bumps iteration, derives status from stale_count bands, maintains healthy_streak, accumulates total_findings, mirrors last_direction (direction_entry.id)/last_metric (metric_value)/updated_at (api.nowIso). Writes via temp file then final path (best-effort atomic given read/write-only primitives; no rename available). All missing/invalid numerics coerce to safe defaults; read/write failures return label 'error' without throwing."
-}

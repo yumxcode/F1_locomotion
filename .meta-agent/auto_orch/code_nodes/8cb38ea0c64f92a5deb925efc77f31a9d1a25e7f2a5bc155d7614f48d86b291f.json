@@ -1,8 +1,0 @@
-{
-  "schemaVersion": "1.0",
-  "nodeId": "state_writer",
-  "sourceHash": "8cb38ea0c64f92a5deb925efc77f31a9d1a25e7f2a5bc155d7614f48d86b291f",
-  "codeRef": "code_nodes/8cb38ea0c64f92a5deb925efc77f31a9d1a25e7f2a5bc155d7614f48d86b291f.mjs",
-  "createdAt": 1782965294511,
-  "note": "Deterministic state_writer node. Reads iteration_eval.json + progress.json, appends findings/direction/log, consumes pivot_plan.json (summary→pivots + clears to {}), self-corrects progress.total_findings to match findings.jsonl line count, rewrites progress.json. All timestamps via api.nowIso. No imports/Date/random/network. Returns written/error."
-}

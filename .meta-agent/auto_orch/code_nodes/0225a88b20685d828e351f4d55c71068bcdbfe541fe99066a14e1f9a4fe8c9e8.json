@@ -1,8 +1,0 @@
-{
-  "schemaVersion": "1.0",
-  "nodeId": "reduce_progress",
-  "sourceHash": "0225a88b20685d828e351f4d55c71068bcdbfe541fe99066a14e1f9a4fe8c9e8",
-  "codeRef": "code_nodes/0225a88b20685d828e351f4d55c71068bcdbfe541fe99066a14e1f9a4fe8c9e8.mjs",
-  "createdAt": 1782964653091,
-  "note": "Deterministic progress reducer: reads progress.json + iteration_eval.json, updates stale_count/status/iteration/healthy_streak/last_direction/last_metric/total_findings/updated_at. Temp+final write for best-effort atomicity. Returns 'updated' or 'error'."
-}
