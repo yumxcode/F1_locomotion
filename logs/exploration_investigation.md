@@ -2,17 +2,17 @@
 
 _Project: agibot_x1_train_oma (X1 双足行走)_
 _Investigator: 子代理 (exploration 调研)_
-_Date: 2026-07-02_
+_Date: 2026-07-02 (rev: 逐列复算 `gait_20260616_135100.csv` 坐实 §1.2.1)_
 _Scope: 调研尚未出现在 `directions_tried` 的步态/控制机制 + 最新论文思路，列候选方向与依据。写域限定本文件。_
 
-> **重要声明 — `paper_search` 不可用**
-> 本会话未提供 `paper_search` 工具（PATH 上也不存在该 CLI）。因此本文引用的论文来自：(a) 设计文档已确认的参考文献；(b) 调研者对双足/四足 RL 步态文献的既有知识。**所有论文标题/作者/年份均为待核实**——进入 `$design`/`$tune` 前，请用 `paper_search` 复核每一条引用，确认其结论仍适用于当前 X1 设定。候选方向本身的价值不依赖单一引用，证据已由本仓库源码与 `gait_logs` 实测数据独立支撑。
+> **重要声明 — `paper_search` 不可用（2026-07-02 二次确认）**
+> 本会话既未提供 `paper_search` 工具，`which paper_search` / `type paper_search` 在 PATH 上也均返回未找到（exit 1）。因此本文引用的论文来自：(a) 设计文档已确认的参考文献（van Marum 2024、Schumacher 2025）；(b) 调研者对双足/四足 RL 步态文献的既有知识。**所有论文标题/作者/年份均为待核实**——进入 `$design`/`$tune` 前，请用 `paper_search` 复核每一条引用，确认其结论仍适用于当前 X1 设定。候选方向本身的价值不依赖单一引用：本文 §1 的失败模式与 §2 的 scale 估算均由本仓库源码（`x1_dh_stand_config.py` / `x1_dh_stand_env.py` / `legged_robot.py`）与 `gait_logs/*.csv` 实测数据**直接复算**独立支撑。
 
 ---
 
 ## 0. 执行摘要 (TL;DR)
 
-1. **发现一个已被实测坐实、但 `directions_tried` 从未触及的失败模式：扭胯走（hip-yaw 为主驱动的骨盆扭转步态）。** 在 V13e 最新 4 个 `gait_log` 中，hip-yaw 摆幅是 hip-pitch（迈步）摆幅的 **2.0×–3.0×**；左髋 yaw 关节相对默认位偏移峰值达 **3.42 rad（≈110°）**，而当前所有 reward 项（tracking / single_foot_contact / feet_airtime / orientation / base_height / torque）**无一约束髋 yaw / 腿外展**。这是 `single_foot_contact` 涌现路线的典型 reward hack——策略用"扭转骨盆 + 单脚始终接地"满足所有奖励，却不真正迈步。
+1. **发现一个已被实测坐实、但 `directions_tried` 从未触及的失败模式：扭胯走（hip-yaw 为主驱动的骨盆扭转步态）。** 在 V13e 最新 4 个 `gait_log` 中，hip-yaw 摆幅是 hip-pitch（迈步）摆幅的 **2.0×–3.0×**；左髋 yaw 关节相对默认位偏移峰值达 **3.42 rad（≈110°）**，而当前所有 reward 项（tracking / single_foot_contact / feet_airtime / orientation / base_height / torque）**无一约束髋 yaw / 腿外展**。直接复算最新 CSV 进一步证实这是 reward hack 而非合法步态：**跟踪效率仅 67 %**（base_vx 0.335 m/s vs cmd 0.5 m/s）、**49 % 帧双脚同时踩地**（shuffle 而非交替迈步）、左/右髋 yaw 偏移**不对称 6.2×**。`single_foot_contact` 的 0.2 s 宽限窗口对此类"贴地扭胯"饱和给满分，零约束力。
 2. **最高优先级、最低风险、零梯度冲突的候选：髋 yaw 外展正则化（hip-yaw / leg-abduction penalty）。** 它直接惩罚被 hack 的那个量，与现有 reward 正交，scale 估算清晰（见 §2.1）。
 3. **第二优先级：足部位置 / 站立宽度奖励（feet_position, van Marum 设计中列为"方案C"但从未落地）**——从几何角度堵同一条漏洞。
 4. **结构性新范式（未尝试）：自适应步频 gait clock（CPG-RL）、AMP/DeepMimic 运动先验、质心角动量(CAM)正则、动作 jerk 正则**。
@@ -69,6 +69,20 @@ _Scope: 调研尚未出现在 `directions_tried` 的步态/控制机制 + 最新
 **解读**：左髋 yaw 被驱动到距默认 **3.42 rad（≈110°）**——脚几乎横着伸出，靠扭转骨盆+单脚接地前移。hip-roll 偏移小（<0.5 rad），故是 **yaw 主导，不是 roll 外八**。脚抬升 0.087–0.091 m（>target 0.05 m），所以**脚有在抬，问题不在 clearance，而在水平推进被 yaw 接管**。
 
 **为什么现有 reward 拦不住**：tracking 只看 base 线速度（任何方式达到都给分）；single_foot_contact 只数接触脚数；orientation 只罚 pitch/roll（不管 yaw，不管腿外展）；base_height/torque 都不触及 yaw。→ 策略找到"扭胯"这条满足全部奖励的捷径。这是 van Marum 最小涌现路线在 12-DOF 全向 X1 上的**结构化漏洞**。
+
+#### 1.2.1 进一步量化诊断（2026-07-02 直接逐列复算 CSV，含单位）
+
+对最新日志 `gait_20260616_135100.csv`（329 行，**全程 `cmd_vx` 恒定 0.5 m/s**）逐列复算，五项新证据把"扭胯走是 reward hack 而非合法步态"钉死：
+
+| 诊断量 | 实测值 | 单位 | 解读 |
+|--------|--------|------|------|
+| 速度跟踪效率 | base_vx 均值 0.335 / cmd 0.5 = **67 %** | m/s | 极端扭胯只换来 2/3 目标速度 → 扭转是**低效捷径**，绝非合法高效步态 |
+| 接触模式：双脚同时着地占比 | **0.49** | 帧占比 | 近**一半时间双脚都踩地** → 本质是 **shuffle（贴地挪动）**，非交替迈步 |
+| 接触模式：单脚着地占比 | 0.39 | 帧占比 | 真正交替单脚支撑仅 1/3，远低于健康步态（应 > 0.8） |
+| 左/右髋 yaw 偏移不对称 | 左 2.51 : 右 0.41 = **6.2×** | rad | 极度**不对称**扭转 → 直接解释 V16 mirror-symmetry 为何失败（策略找到非对称扭胯解，对称 reward 无锚点） |
+| 骨盆 yaw 摆幅 | 0.43（峰峰值） | rad | `base_yaw` 持续震荡，骨盆在水平面内主动扭动 |
+
+**关键机制印证（与 refutation §3.3 闭环）**：`single_foot_contact` 的 0.2 s 宽限期 = 20 控制帧（100 Hz，`self.dt=0.01 s`）。即便"双脚同时着地"占 49 %，只要最近 20 帧内出现过任一帧"单脚接触"（39 % 的帧恰好满足），宽限窗口就把 `single_foot_contact` **饱和为 1.0 满分**。→ 实测接触模式与"`single_foot_contact` 对 shuffle/扭胯零约束力"的机制分析完全自洽。这也是 refutation §5 判据 C3（"single_foot_contact 与步态质量正相关"→实测**反向**）的定量证据。
 
 > 副作用记录：config 注释还显示另一个涌现 hack——"蹲着走"（V13c height=0.17 锁死），已用 base_height 0.2→0.5 部分压制。`orientation` 用 `projected_gravity[:2]`（pitch+roll），未管 yaw。
 
@@ -170,6 +184,7 @@ _Scope: 调研尚未出现在 `directions_tried` 的步态/控制机制 + 最新
 
 #### 2.11 ★ 对称策略结构化（**不是 reward**）
 - 历史教训：reward-based symmetry 4 次失败。改走**结构对称**——左右腿权重共享/等变网络，让"左右交替"成为归纳偏置而非奖励。依据（待核实）：Heess 2017 (rich env) 的对称运动；等变 RL 系列。属未走过的路，风险中等、收益不确定，列为探索项。
+- **新证据支撑（2026-07-02）**：实测左/右髋 yaw 偏移不对称达 **6.2×**（左 2.51 rad vs 右 0.41 rad）。这解释了 V16 mirror-symmetry 为何失败——策略找到的是**非对称**扭胯解（一侧腿外甩、另一侧正常），而镜像 reward 只能在"对称扭转"这一极小子空间上施加梯度，对真实存在的非对称模式无锚点。结构化对称（权重共享强制左右同构）恰好约束了 reward 管不到的拓扑层面，理论契合度高于再调 reward。
 
 ---
 
