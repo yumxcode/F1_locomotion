@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "nodeId": "route_by_status",
+  "sourceHash": "ec82c9ebf99d2eb9ce4d9c628e2fdf6032c84e0d00a4069966a76fa15a47ab0f",
+  "codeRef": "code_nodes/ec82c9ebf99d2eb9ce4d9c628e2fdf6032c84e0d00a4069966a76fa15a47ab0f.mjs",
+  "createdAt": 1782972580544,
+  "note": "Deterministic router over state/progress.json. Completion gate: (healthy_streak>=10 && total_findings>=20) || iteration>=20 => done (reason distinguishes health_criteria_met vs iteration_limit_reached). Otherwise routes to label equal to progress.status among {healthy,stale,pivot_required,attention_required}; missing/non-string/unknown status => attention_required. Numeric fields are NaN-safe (coerced to 0). Read errors / non-object payload => label 'error' (no exceptions thrown). No imports, no timers/random/network; only api.state.readJson used."
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "nodeId": "error_writer",
+  "sourceHash": "3a99b567d182e3814bea68e9fe21edfac4517a1e9ff6c7c5dcd9d48cc66dc74c",
+  "codeRef": "code_nodes/3a99b567d182e3814bea68e9fe21edfac4517a1e9ff6c7c5dcd9d48cc66dc74c.mjs",
+  "createdAt": 1782965404351,
+  "note": "Reads state/progress.json, sets status='error' and updated_at=api.nowIso, writes back via temp+rename (with graceful fallback to writeJson if api.state.rename is unavailable), then appends {timestamp, iteration, event:'error', summary:'orchestration node error'} to state/iteration_log.jsonl. Returns label 'ok' on success; returns label 'error' if progress.json is missing/invalid or any unexpected exception occurs. No imports, no timers, no Date.now(); timestamp sourced solely from api.nowIso."
+}

@@ -54,8 +54,7 @@ Thumbs.db
 
 # VS Code
 .vscode
-# logs
-logs
+# runs (excluded, logs/ included for state protocol compliance)
 runs
 
 # other
@@ -73,3 +72,5 @@ MUJOCO_LOG.TXT
 # oh-my-algorithm tooling (managed by oma setup, not project files)
 .oma/skills/
 .oma/templates/
+
+.meta-agent/auto/worktrees/

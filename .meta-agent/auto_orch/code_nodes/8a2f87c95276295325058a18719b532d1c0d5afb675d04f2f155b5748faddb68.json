@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "nodeId": "route_by_status",
+  "sourceHash": "8a2f87c95276295325058a18719b532d1c0d5afb675d04f2f155b5748faddb68",
+  "codeRef": "code_nodes/8a2f87c95276295325058a18719b532d1c0d5afb675d04f2f155b5748faddb68.mjs",
+  "createdAt": 1782965344604,
+  "note": "Fully deterministic: no Date/timers/random/network. All state access via api.state.readJson. Returns OrchVerdict {action, label, data}. Handles missing/unreadable/invalid state gracefully (→ error label) and missing/unknown status (→ attention_required)."
+}

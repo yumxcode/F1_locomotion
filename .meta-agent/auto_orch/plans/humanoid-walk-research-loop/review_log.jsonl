@@ -1,0 +1,4 @@
+{"event":"approved","at":1782959080653,"version":2,"approvedByUser":true,"source":"planner","note":"accepted on attempt 2"}
+{"event":"approved","at":1782964469830,"version":3,"approvedByUser":true,"source":"saved","note":"loaded saved plan humanoid-walk-research-loop@v2"}
+{"event":"materialized","at":1782965404361,"version":3}
+{"event":"run","at":1782965805988,"version":3,"status":"failed","costUsd":0.059842396000000006,"visitedPath":["init_state","load_state","error_writer"],"note":"terminal error node reached: error_writer"}

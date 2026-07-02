@@ -1,0 +1,13 @@
+[
+  {
+    "taskId": "subtask-e670c4fe",
+    "question": "van Marum 2024 humanoid walking reward design single foot contact",
+    "status": "success",
+    "conclusion": "van Marum 2024 shows that minimal velocity/orientation tracking rewards alone yield hopping; adding a tuning-free single-foot-contact reward (reward 1 when exactly one foot is grounded, with a 0.2 s grace window) is the most reliable, clock-free way to make bipedal walking emerge on the Digit human…",
+    "reportPath": ".meta-agent/research/subtask-e670c4fe/report.md",
+    "sourcesPath": ".meta-agent/research/subtask-e670c4fe/sources.md",
+    "papersCovered": 1,
+    "sessionId": "775ac4ff-8831-4275-a184-6a9aa1a8ddb0",
+    "createdAt": 1782874620438
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "nodeId": "completion_report",
+  "sourceHash": "e4e4ebaf87b304a68aeedb807de87c7ba7c302cfae57d7d90d8b62d4749136a6",
+  "codeRef": "code_nodes/e4e4ebaf87b304a68aeedb807de87c7ba7c302cfae57d7d90d8b62d4749136a6.mjs",
+  "createdAt": 1782972627730,
+  "note": "built-in report writer for completion_report"
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "nodeId": "error_writer",
+  "sourceHash": "236ffd830e8f793ce26f189f34fc2d603a7bd58031705853a6d50ad75a16d0d9",
+  "codeRef": "code_nodes/236ffd830e8f793ce26f189f34fc2d603a7bd58031705853a6d50ad75a16d0d9.mjs",
+  "createdAt": 1782972627725,
+  "note": "Deterministic ESM. Uses only api.state.* and api.nowIso; no imports, no timers, no randomness. Missing/corrupt progress.json is tolerated (progress becomes a stub but status is still set to 'error'). Real IO failures fall back to label 'error' instead of throwing. Atomic write-back relies on the platform's writeJson (temp+rename)."
+}
