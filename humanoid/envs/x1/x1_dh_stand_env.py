@@ -981,7 +981,7 @@ class X1DHStandEnv(LeggedRobot):
     def _reward_torque(self):
         """
         ⭐ V13 新增 — 温和力矩正则化 (van Marum 用 weight=0.01)
-        
+
         exp(-Σ|τ| / 100)
         - 归一化因子 100 使 reward 在合理范围内
         - 站立时 τ ≈ 20-40Nm per joint, Σ|τ| ≈ 240-480
@@ -989,6 +989,31 @@ class X1DHStandEnv(LeggedRobot):
         - 走路时 τ 更大, reward 更低 → 温和倾向减少力矩
         """
         return torch.exp(-torch.sum(torch.abs(self.torques), dim=1) / 100.0)
+
+    def _reward_hip_yaw_reg(self):
+        """
+        ⭐ V14 新增 — 髋 yaw 正则化 (anti-hip-twist, 根因修复)
+
+        根因: hip_yaw 关节 URDF 限位 ±3.14 rad 近乎无界 → dof_pos_limits
+        (soft 0.98, 罚区仅 ±0.063rad) 完全无法约束它。步态日志定量证实
+        hip-twist 走时左髋 yaw 均值 +2.2rad (默认 -0.31, err=2.51rad)、
+        右髋 yaw 均值 +0.72rad (默认 +0.31)，同时 base_wz 振荡 ±1.9rad/s、
+        base_vy ±0.3m/s —— 策略用骨盆扭转代偿前进速度跟踪，纯前进命令
+        下 vx 仅达命令的 67%。
+
+        本项把髋 yaw 拉回标称 toed-out 角度 (lhy=-0.31, rhy=+0.31)，
+        直接消除 hip-twist 的驱动自由度，迫使策略改用矢状面摆腿前进。
+
+        reward = exp(-((lhy-Δl)² + (rhy-Δr)²) / sigma)
+        - 正常走: 髋 yaw ≈ 默认, err≈0.1rad → reward≈0.96
+        - hip-twist: 髋 yaw err²≈6.3 → reward≈0.0 (e^-12.9)
+        - sigma=0.5: 区分度大, 仍允许转弯时的小幅 yaw 偏移
+          (转弯由步态旋转实现, 无需髋 yaw >1rad)
+        """
+        lhy_err = self.dof_pos[:, 2] - self.default_dof_pos[:, 2]
+        rhy_err = self.dof_pos[:, 8] - self.default_dof_pos[:, 8]
+        yaw_err = torch.square(lhy_err) + torch.square(rhy_err)
+        return torch.exp(-yaw_err / 0.5)
 
     def update_command_curriculum(self, env_ids):
         """

@@ -367,6 +367,10 @@ class X1DHStandCfg(LeggedRobotCfg):
             base_height = 0.5         # V13d: 0.2→0.5, 惩罚蹲低 (V13c height=0.17, 策略蹲着走锁死)
             # ⑥ 温和力矩正则化
             torque = 0.01             # ⭐ 新增: exp(-Σ|τ|/100), van Marum 权重 0.01
+            # ⑧ V14 anti-hip-twist: 髋 yaw 正则化
+            #    hip_yaw 限位 ±3.14rad 无界致 dof_pos_limits 失效 → 加显式正则
+            #    正常走 raw≈0.96, hip-twist raw≈0.0; scale 0.4 → 0.38 swing 足以打破局部最优
+            hip_yaw_reg = 0.4
             # ⑦ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
