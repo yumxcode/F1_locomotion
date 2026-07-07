@@ -120,6 +120,22 @@ class X1DHStandEnv(LeggedRobot):
         self.single_contact_history = torch.zeros((self.num_envs, grace_frames), device=self.device)
         # V13: feet_airtime 需要的接触缓冲 (独立于旧 _reward_feet_air_time)
         self.airtime_contact_prev = torch.zeros((self.num_envs, 2), dtype=torch.bool, device=self.device)
+        # === Round-1redo gait telemetry (行为无关，仅诊断) ===
+        # 上轮 reward 指标无法证明是否真前向行走；加入 per-env 累计缓冲，
+        # 在 reset_idx 时按 episode 均值上报为 Episode/ 指标。
+        # forward vel: base_lin_vel[:,0] (机体系前向)
+        # 接触状态: 单脚/双脚/零脚 占比 (区分交替行走 vs 静态站立)
+        # 足部离地高度差: max(footz)-min(footz) (交替抬脚 proxy, shuffle/站立≈0)
+        n = self.num_envs
+        self._diag_steps = torch.zeros(n, device=self.device)
+        self._fwd_vel_sum = torch.zeros(n, device=self.device)
+        self._fwd_vel_abs_sum = torch.zeros(n, device=self.device)
+        self._walk_steps = torch.zeros(n, device=self.device)
+        self._walk_fwd_vel_sum = torch.zeros(n, device=self.device)
+        self._single_c_sum = torch.zeros(n, device=self.device)
+        self._double_c_sum = torch.zeros(n, device=self.device)
+        self._zero_c_sum = torch.zeros(n, device=self.device)
+        self._foot_diff_sum = torch.zeros(n, device=self.device)
 
 
     def _push_robots(self):
@@ -275,6 +291,24 @@ class X1DHStandEnv(LeggedRobot):
             else:
                 self.rand_push_force.zero_()
                 self.rand_push_torque.zero_()
+
+        # === Round-1redo gait telemetry accumulation (行为无关) ===
+        # 此处 base_lin_vel / contact_forces / rigid_state 均已 refresh (post_physics_step 内)
+        self._diag_steps += 1.
+        fwd = self.base_lin_vel[:, 0]
+        self._fwd_vel_sum += fwd
+        self._fwd_vel_abs_sum += torch.abs(fwd)
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        n_contact = contact.float().sum(dim=1)
+        self._single_c_sum += (n_contact == 1).float()
+        self._double_c_sum += (n_contact == 2).float()
+        self._zero_c_sum += (n_contact == 0).float()
+        footz = self.rigid_state[:, self.feet_indices, 2]
+        self._foot_diff_sum += footz.max(dim=1).values - footz.min(dim=1).values
+        # walk-command-only forward velocity (排除站立命令段)
+        walk_cmd = (torch.norm(self.commands[:, :3], dim=1) > self.cfg.commands.stand_com_threshold)
+        self._walk_steps += walk_cmd.float()
+        self._walk_fwd_vel_sum += fwd * walk_cmd.float()
 
     def compute_ref_state(self):
         phase = self._get_phase()
@@ -557,6 +591,26 @@ class X1DHStandEnv(LeggedRobot):
         for key in self.episode_sums.keys():
             self.extras["episode"]['rew_' + key] = torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             self.episode_sums[key][env_ids] = 0.
+        # === Round-1redo gait telemetry logging (行为无关诊断) ===
+        st = torch.clamp(self._diag_steps[env_ids], min=1.0)
+        ws = torch.clamp(self._walk_steps[env_ids], min=1.0)
+        self.extras["episode"]["diag_forward_vel"] = torch.mean(self._fwd_vel_sum[env_ids] / st)
+        self.extras["episode"]["diag_abs_forward_vel"] = torch.mean(self._fwd_vel_abs_sum[env_ids] / st)
+        self.extras["episode"]["diag_walk_forward_vel"] = torch.mean(self._walk_fwd_vel_sum[env_ids] / ws)
+        self.extras["episode"]["diag_single_contact_ratio"] = torch.mean(self._single_c_sum[env_ids] / st)
+        self.extras["episode"]["diag_double_contact_ratio"] = torch.mean(self._double_c_sum[env_ids] / st)
+        self.extras["episode"]["diag_zero_contact_ratio"] = torch.mean(self._zero_c_sum[env_ids] / st)
+        self.extras["episode"]["diag_foot_height_diff"] = torch.mean(self._foot_diff_sum[env_ids] / st)
+        # reset diagnostic buffers for reset envs
+        self._diag_steps[env_ids] = 0.
+        self._fwd_vel_sum[env_ids] = 0.
+        self._fwd_vel_abs_sum[env_ids] = 0.
+        self._walk_steps[env_ids] = 0.
+        self._walk_fwd_vel_sum[env_ids] = 0.
+        self._single_c_sum[env_ids] = 0.
+        self._double_c_sum[env_ids] = 0.
+        self._zero_c_sum[env_ids] = 0.
+        self._foot_diff_sum[env_ids] = 0.
         # log additional curriculum info
         if self.cfg.terrain.mesh_type == "trimesh":
             self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
