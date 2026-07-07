@@ -464,7 +464,10 @@ class X1DHStandEnv(LeggedRobot):
         q = (self.lagged_dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos
         dq = self.lagged_dof_vel * self.obs_scales.dof_vel  
 
-        # 47
+        # 49 = 47 proprio + 2 foot-contact (binary)
+        # Round-1 obs-contact-feedback: 把真实二值脚接触喂入 actor 观测，
+        # 让策略对齐"实际接触"与"步态时钟(sin/cos 相位)"，摆脱静态单脚站立的
+        # 局部最优(contact_mask 原本仅存在于 critic privileged obs)。
         obs_buf = torch.cat((
             self.command_input,  # 5 = 2D(sin cos) + 3D(vel_x, vel_y, aug_vel_yaw)
             q,    # 12
@@ -472,6 +475,7 @@ class X1DHStandEnv(LeggedRobot):
             self.actions,   # 12
             self.lagged_base_ang_vel * self.obs_scales.ang_vel,  # 3
             self.lagged_base_euler_xyz * self.obs_scales.quat,  # 3
+            contact_mask.float(),  # 2 ⭐ 真实脚接触反馈 (左/右, 接触力>5N=1)
         ), dim=-1)
 
         if self.cfg.env.num_single_obs == 48:

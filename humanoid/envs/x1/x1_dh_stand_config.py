@@ -41,7 +41,8 @@ class X1DHStandCfg(LeggedRobotCfg):
         frame_stack = 66      #all histroy obs num
         short_frame_stack = 5   #short history step
         c_frame_stack = 3  #all histroy privileged obs num
-        num_single_obs = 47
+        # Round-1 obs-contact-feedback: 47 proprio + 2 real binary foot-contact
+        num_single_obs = 49
         num_observations = int(frame_stack * num_single_obs)
         single_num_privileged_obs = 73
         single_linvel_index = 53
