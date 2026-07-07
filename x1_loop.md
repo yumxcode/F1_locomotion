@@ -49,35 +49,10 @@
   - 改变评估指标或环境假设
   pivot 后必须更新 directions_tried.json。
 
-  5. code 节点要求
-  把机械状态更新和落盘写成 code 节点，不要让 executor 用自然语言手工改
-  JSON。
-  planner 只声明 codeSpec，不要直接写源码。code_author 会生成并冻结代码。
-  code 节点至少包括：
-  - reduce_progress
-  - state_writer
-  可选：
-  - direction_diversity_check
-  - attention_report_writer
-
-  6. 审查节点
-  加入 reviewer/verify 节点：
-  - verify_findings：检查 findings 是否有证据、是否不是重复内容
-  - verify_state_update：检查 state 文件是否按协议更新
-  失败时把纠偏 messages 投递回对应 executor/code 前置阶段重跑。
-
-  7. 并行
-  如果适合，可用 parallel 节点做多方向只读探索，例如：
-  - investigation
-  - refutation
-  - cross_domain_analogy
-  并行分支默认 shared_readonly；不要并发写同一个 state 文件。写 state 必须
-  集中到 state_writer。
-
-  8. 边界
+  5. 边界
   - 所有节点要有合理 bounds，避免无限循环。
   - 计划图必须有优雅退出路径，不要依赖撞上限退出。
- 9. 注意事项：
+  6. 注意事项：
   - 训练在远端gradmotion执行，建议30分钟看一下结果，如果进入平台期，除非有明显的改进倾向，请及时终止，进入extract_findings
   - 当遇到gradmotion账号无余额时，请执行account-pool remove id（当前id）,再执行account-pool get获取新的有额度的账号
 
