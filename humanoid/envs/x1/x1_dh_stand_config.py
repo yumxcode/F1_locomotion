@@ -87,8 +87,14 @@ class X1DHStandCfg(LeggedRobotCfg):
         fix_base_link = False
 
     class terrain(LeggedRobotCfg.terrain):
-        # mesh_type = 'plane'
-        mesh_type = 'trimesh'
+        # Round-1 (flat-terrain-gait-emergence): 地形改 'plane'。
+        # 历史 16 版改动全是 reward/obs；terrain(mesh_type) 与 curriculum 自首提交从未被碰。
+        # 当前 reward 栈(V13e+V14 hip_yaw_reg+R1 接触观测)从未训练过，却起步于粗糙
+        # trimesh(坡/阶/离散/波)+满量程 DR——对尚未学会走路的策略过于严苛，且与
+        # hip-twist 局部最优相互混淆。改平面让策略在干净场地尝试涌现正常步态，
+        # 既建立本 loop 首条基线，又以 terrain 类别切入(与 reward 调参正交)。
+        # reward / DR / 课程一律不动，单一变量隔离地形影响。
+        mesh_type = 'plane'
         curriculum = False
         # rough terrain only:
         measure_heights = False
