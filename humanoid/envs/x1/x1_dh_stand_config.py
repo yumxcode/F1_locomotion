@@ -336,8 +336,16 @@ class X1DHStandCfg(LeggedRobotCfg):
         compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
         # V13: single_foot_contact 宽限期 (秒), van Marum 用 0.2s
         single_contact_grace = 0.2
-        # V13: feet_airtime 最低空中时间阈值 (秒), van Marum 用 0.4s
-        airtime_threshold = 0.4
+        # V13: feet_airtime 最低空中时间阈值 (秒)
+        # Round-1 修正 (airtime-cycle-consistency):
+        #   van Marum 用 0.4s，但其平台 Digit 无强制步态时钟。本 env 有强制 0.9s
+        #   步态时钟(喂入 obs sin/cos 相位、stance_mask、ref 轨迹)，二者须一致。
+        #   数学: cycle=0.9s → 最大空中时间=0.45s(50%占空比)；真实行走占空比 0.6-0.7
+        #   → 空中时间 0.27-0.36s。原阈值 0.4s 要求占空比≤0.556，故对任何真实步态
+        #   airtime reward 恒为负(与"鼓励充分抬脚"意图相反)。
+        #   降至 0.30s = cycle×(1-0.6占空比)，使 airtime 成为真正双极正则项:
+        #   充分抬脚→正、过快碎步→负。与 0.9s 步态时钟物理自洽。
+        airtime_threshold = 0.30
         
         class scales:
             # ============================================================
