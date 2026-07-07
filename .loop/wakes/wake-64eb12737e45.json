@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "wakeId": "wake-64eb12737e45",
+  "loopId": "x1-locomotion-research-loop-v1",
+  "projectDir": "/Users/yumx/code/robot_x/X1/agibot_x1_train_oma",
+  "kind": "timer",
+  "fireAt": 1783398999682,
+  "status": "pending",
+  "attempts": 0,
+  "createdAt": 1783398999683,
+  "updatedAt": 1783398999683
+}

@@ -1,0 +1,12 @@
+{
+  "iteration": 1,
+  "meters": {
+    "iteration": 1,
+    "stale_count": 1
+  },
+  "status": "stale",
+  "bestMetric": null,
+  "totalFindings": 0,
+  "totalCostUsd": 0,
+  "updatedAt": 1783398999681
+}

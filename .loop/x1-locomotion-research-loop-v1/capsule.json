@@ -1,0 +1,16 @@
+{
+  "builtAt": 1783397139382,
+  "round": 1,
+  "mode": "normal",
+  "goal": "为 X1 人形机器人开发稳定、物理可信的前向行走 RL 控制策略：通过 reward 设计与训练流程的可重复迭代，在仿真中达到稳健、可重复的行走步态（连续行走不倒、稳定跟踪速度命令、reward 各项物理合理无 hacking），为 sim2real 部署奠基。每轮围绕 task_spec.md 推进，产出可验证 findings。",
+  "meters": {
+    "iteration": 0,
+    "stale_count": 0
+  },
+  "bestMetric": null,
+  "totalFindings": 0,
+  "directionsTried": [],
+  "recentFindings": [],
+  "recentRounds": [],
+  "inboxMessages": []
+}

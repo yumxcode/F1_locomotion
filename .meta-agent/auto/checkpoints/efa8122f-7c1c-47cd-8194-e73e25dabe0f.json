@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.1",
+  "sessionId": "efa8122f-7c1c-47cd-8194-e73e25dabe0f",
+  "updatedAt": 1783398999687,
+  "revision": 1,
+  "lastBoundary": "dispose",
+  "completedSteps": [],
+  "pendingTodos": [],
+  "activeSubAgentIds": [
+    "subtask-ef397eb5",
+    "subtask-6a3178a1",
+    "subtask-bc316bb1",
+    "subtask-095947b6",
+    "subtask-a20f6c1f"
+  ],
+  "artifacts": [],
+  "turnCount": 0,
+  "estimatedCostUsd": 0,
+  "verifyRejections": 0,
+  "driftCorrections": 0,
+  "compactions": 0
+}

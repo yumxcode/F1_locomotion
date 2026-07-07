@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "wakeId": "wake-89a19aaec4e4",
+  "loopId": "x1-locomotion-research-loop-v1",
+  "projectDir": "/Users/yumx/code/robot_x/X1/agibot_x1_train_oma",
+  "kind": "timer",
+  "fireAt": 1783394244243,
+  "status": "done",
+  "attempts": 1,
+  "createdAt": 1783394244244,
+  "updatedAt": 1783398999686,
+  "claim": {
+    "owner": "yumxs-MacBook-Pro.local#95208",
+    "claimedAt": 1783397139373,
+    "expiresAt": 1783397739373
+  }
+}
