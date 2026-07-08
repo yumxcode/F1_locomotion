@@ -847,6 +847,50 @@ class X1DHStandEnv(LeggedRobot):
         rew *= has_cmd
         return torch.sum(rew, dim=1)
 
+    def _reward_swing_step(self):
+        """
+        ⭐ R2 核心新增 — anti-spoof 跨步 reward (不可欺骗)
+
+        R1redo 诊断：当前 reward 可被欺骗——policy 原地双脚微弹
+        (diag_foot_height_diff=6.8mm, zero_contact=45%, 前向速度仅 cmd 的 13-20%)
+        即骗取 single_foot_contact + tracking + 存活收益。根因是 reward 栈缺一个
+        '不可欺骗的跨步'信号。
+
+        本项同时要求三条件(全 AND)才给分，bounce 全不满足→0：
+          ① 步态时钟摆动脚(swing_mask=1)：对齐步态相位
+          ② 抬脚高度>min_swing_clearance(0.03m)门控：bounce(6.8mm)判负，stride(5cm)通过
+          ③ 该脚向命令方向前进(foot_vx·sign(cmd_x)，clamp 0~0.5)
+          ④ 对侧脚确实触地(真单支撑)：bounce 双脚离地→opposite_contact=0→判负
+        standing 命令(has_cmd=0)→0，中立不影响站立。
+
+        不可欺骗性数学：
+          - bounce: lift=0.0068<0.03→cleared=0 ⇒ reward=0 (条件②失败)
+          - 高抬腿原地踏步: foot_vx≈0→fwd=0 ⇒ reward=0 (条件③失败)
+          - 双脚同步迈步: opposite_contact=0⇒reward=0 (条件④失败)
+          - 真交替跨步: 三条件全满足⇒reward>0
+        """
+        foot_z = self.rigid_state[:, self.feet_indices, 2]                  # [N,2] 世界 z
+        foot_vx = self.rigid_state[:, self.feet_indices, 7]                 # [N,2] 世界 x 线速度
+        contact = (self.contact_forces[:, self.feet_indices, 2] > 5.).float()  # [N,2]
+
+        stance_mask = self._get_stance_mask()                               # [N,2] 1=stance
+        swing_mask = 1.0 - stance_mask                                      # [N,2] 1=swing
+
+        # 条件②: 抬脚门控 (above-ground 高度)
+        lift = foot_z - self.cfg.rewards.feet_to_ankle_distance             # 地面以上高度
+        cleared = (lift > self.cfg.rewards.min_swing_clearance).float()     # [N,2]
+
+        # 条件③: 向命令方向前进
+        cmd_dir = torch.sign(self.commands[:, 0]).unsqueeze(1)             # [N,1]
+        fwd = torch.clamp(foot_vx * cmd_dir, min=0., max=0.5)              # [N,2]
+        has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).unsqueeze(1).float()  # [N,1]
+
+        # 条件④: 对侧脚触地 (真单支撑) — 用 flip 取另一只脚的接触
+        other_contact = torch.stack([contact[:, 1], contact[:, 0]], dim=1)  # [N,2]
+
+        rew = cleared * fwd * swing_mask * has_cmd * other_contact          # [N,2]
+        return torch.sum(rew, dim=1)
+
     def _reward_landing_impact(self):
         """
         ⑧ 落地冲击惩罚 — V9: 降低阈值到 500N (≈3.4× 体重)

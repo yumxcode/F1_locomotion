@@ -330,6 +330,9 @@ class X1DHStandCfg(LeggedRobotCfg):
         final_swing_joint_delta_pos = [0.25, 0.05, -0.11, 0.35, -0.16, 0.0, -0.25, -0.05, 0.11, 0.35, -0.16, 0.0]
         target_feet_height = 0.05   # 保持 V7 — 抬脚是正确步态，不应降低
         target_feet_height_max = 0.08  # 保持 V7
+        # R2: swing_step 门控 — 最小抬脚高度。bounce 实测 lift≈6.8mm，stride≈5cm，
+        # 故 0.03m 门控使 bounce 得 0、stride 得分。物理依据：R1redo diag_foot_height_diff=6.8mm。
+        min_swing_clearance = 0.03
         feet_to_ankle_distance = 0.041
         cycle_time = 0.9
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
@@ -386,7 +389,12 @@ class X1DHStandCfg(LeggedRobotCfg):
             #    hip_yaw 限位 ±3.14rad 无界致 dof_pos_limits 失效 → 加显式正则
             #    正常走 raw≈0.96, hip-twist raw≈0.0; scale 0.4 → 0.38 swing 足以打破局部最优
             hip_yaw_reg = 0.4
-            # ⑦ 安全网
+            # ⑨ R2 swing_step — anti-spoof 跨步 (不可欺骗)
+            #    仅当(步态时钟摆动脚)抬脚>min_swing_clearance 且 向命令方向前进 且 对侧脚触地(单支撑) 时给分
+            #    bounce(双脚微弹 6.8mm) 三条件全不满足→0; standing→0(中立); 真跨步→分
+            #    raw per foot max=0.5(foot_vx clamp), 两脚×→max≈1.0; scale 0.5 → 与 single_foot_contact 0.8 同量级
+            swing_step = 0.5
+            # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
             symmetry = 0.0
