@@ -891,6 +891,79 @@ class X1DHStandEnv(LeggedRobot):
         rew = cleared * fwd * swing_mask * has_cmd * other_contact          # [N,2]
         return torch.sum(rew, dim=1)
 
+    # ============================================================
+    # R3: continuous-gait-shape — 把 R2 失败的硬 AND-gate 解耦为三项
+    #     连续可微 reward，每项独立梯度，把'门槛'变'斜坡'让策略可探索。
+    #     解决 R2-F1(稀疏失效) + R2-F2(bounce 锁定) + 评审要求
+    # ============================================================
+
+    def _reward_swing_lift(self):
+        """
+        ⭐ R3 ⑨-a — 连续抬脚斜坡 (替代 R2 swing_step 硬门控)
+
+        R2 教训: swing_step 硬 AND-gate(抬脚>3cm 才给分)太稀疏，policy 从未触发
+        (reward≈0 flat)。本项改用线性连续 ramp，任何抬脚都给正向梯度：
+
+        reward = Σ_f clamp(lift_f / target, 0, 1) × swing_mask_f
+
+        量级 (用 R2 实测 bounce 基线标定):
+          - bounce: 摆动脚(swing_mask=1)抬 ~3.4mm → clamp(0.0034/0.05)=0.068
+          - 真跨步: 摆动脚抬 5cm → 1.0
+          - standing: swing_mask=0 → 0 (中立，_get_stance_mask 在 stand_cmd 时全 stance)
+        始终正向梯度：抬得越高分越多，不需跨过门槛。
+        """
+        foot_z = self.rigid_state[:, self.feet_indices, 2]                    # [N,2] 世界 z
+        stance_mask = self._get_stance_mask()                                 # [N,2]
+        swing_mask = 1.0 - stance_mask                                        # [N,2]
+        lift = foot_z - self.cfg.rewards.feet_to_ankle_distance               # 地面以上高度
+        target = self.cfg.rewards.target_feet_height                          # 0.05m
+        r = torch.clamp(lift / target, min=0., max=1.0)                       # [N,2] 线性 ramp
+        return torch.sum(r * swing_mask, dim=1)
+
+    def _reward_forward_progress(self):
+        """
+        ⭐ R3 ⑨-b — 不可欺骗的前进 reward (用 base 实际前向速度)
+
+        tracking_lin_vel 是 spoofable 的(exp(-cmd_error) 在振荡时仍高分)，
+        是 bounce 的主要收益来源(评审指出)。本项直接奖励 base 实际前向速度，
+        振荡骗不到——必须真正前移才得分。
+
+        reward = clamp(vx·sign(cmd_x), 0, cap)/cap × has_cmd
+
+        量级:
+          - bounce: vx≈0.15(振荡) → clamp/0.6 ≈ 0.25
+          - 真走: vx≈0.6 → 1.0
+          - standing: has_cmd=0 → 0 (中立)
+        不可欺骗: vx 是 base 实际速度(物理量)，无法靠振荡虚增。
+        """
+        vx = self.base_lin_vel[:, 0]                                          # body-frame 前向速度
+        cmd_dir = torch.sign(self.commands[:, 0])
+        has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).float()
+        cap = self.cfg.commands.max_curriculum                                # 0.6
+        r = torch.clamp(vx * cmd_dir, min=0., max=cap) / cap
+        return r * has_cmd
+
+    def _reward_no_double_air(self):
+        """
+        ⭐ R3 ⑨-c — 反 bounce 惩罚 (直接打击双脚同时离地)
+
+        R1redo/R2 诊断: bounce 核心特征是 zero_contact_ratio≈45-52%(双脚同时离地)。
+        single_foot_contact 奖励 n_contact==1 但不惩罚 n_contact==0，故 bounce 仍受益。
+        本项直接惩罚双脚同时离地。
+
+        reward = both_air (n_contact==0 指示); scale 负 → 惩罚
+
+        量级 (scale -0.4):
+          - bounce: zero_contact 52% → raw 0.52 → 罚 -0.21
+          - 真走: zero_contact ~5% → 罚 -0.02
+          - standing: 双脚着地 n_contact=2 → 0 (不罚)
+        直接削弱 bounce 净收益，与 forward_progress 共同把策略推向单支撑交替。
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        n_contact = contact.float().sum(dim=1)
+        both_air = (n_contact == 0).float()
+        return both_air
+
     def _reward_landing_impact(self):
         """
         ⑧ 落地冲击惩罚 — V9: 降低阈值到 500N (≈3.4× 体重)

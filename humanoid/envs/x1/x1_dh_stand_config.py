@@ -373,7 +373,7 @@ class X1DHStandCfg(LeggedRobotCfg):
             # Robust Humanoid Standing and Walking" (van Marum 2024)
             # =============================================================
             # ① 任务目标
-            tracking_lin_vel = 0.6    # V13e: 0.4→0.6, 增大推力让策略放弃扭胯走
+            tracking_lin_vel = 0.3    # R3: 0.6→0.3, 削弱 bounce 主要收益(spoofable: 0.48@0.6但实际前向仅22%)
             tracking_ang_vel = 0.5    # V12: 0.8→0.5
             # ② 行走涌现 — 单脚接触 (van Marum 的关键发现)
             single_foot_contact = 0.8 # V13c: 1.0→0.8, 二值reward密度修正后与tracking平衡
@@ -389,11 +389,20 @@ class X1DHStandCfg(LeggedRobotCfg):
             #    hip_yaw 限位 ±3.14rad 无界致 dof_pos_limits 失效 → 加显式正则
             #    正常走 raw≈0.96, hip-twist raw≈0.0; scale 0.4 → 0.38 swing 足以打破局部最优
             hip_yaw_reg = 0.4
-            # ⑨ R2 swing_step — anti-spoof 跨步 (不可欺骗)
-            #    仅当(步态时钟摆动脚)抬脚>min_swing_clearance 且 向命令方向前进 且 对侧脚触地(单支撑) 时给分
-            #    bounce(双脚微弹 6.8mm) 三条件全不满足→0; standing→0(中立); 真跨步→分
-            #    raw per foot max=0.5(foot_vx clamp), 两脚×→max≈1.0; scale 0.5 → 与 single_foot_contact 0.8 同量级
-            swing_step = 0.5
+            # === R3 continuous-gait-shape: 把 R2 失败的硬 AND-gate(swing_step) 解耦为
+            #    三项连续可微 reward，每项独立给梯度，把'门槛'变'斜坡'让策略可探索 ===
+            # ⑨-a swing_lift — 连续抬脚斜坡 (替代 swing_step 硬门控)
+            #     线性 ramp: clamp(lift/0.05, 0, 1)×swing_mask
+            #     bounce(3.4mm) raw≈0.068, 真跨步(5cm) raw≈1.0 — 始终正向梯度鼓励抬脚
+            swing_lift = 0.4
+            # ⑨-b forward_progress — 不可欺骗的前进 reward (用 base 实际前向速度)
+            #     clamp(vx·sign(cmd), 0, 0.6)/0.6 — 必须真正前移才得分，振荡骗不到
+            #     bounce(0.15m/s) raw≈0.25, 真走(0.6) raw≈1.0
+            forward_progress = 0.4
+            # ⑨-c no_double_air — 反 bounce 惩罚 (直接打击双脚同时离地)
+            #     both_air 指示 (scale 负 → 惩罚)
+            #     bounce zero_contact 52% → raw 0.52 → 罚 -0.21; 真走 5% → 罚 -0.02
+            no_double_air = -0.4
             # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
@@ -435,7 +444,7 @@ class X1DHStandCfgPPO(LeggedRobotCfgPPO):
         in_channels = X1DHStandCfg.env.frame_stack
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.003  # V13d: 0.001→0.003, 恢复探索 (V13c 0.001→noise_std 0.34冻结, V13b 0.005→4.69暴涨)
+        entropy_coef = 0.01  # R3: 0.003→0.01, 促探索跳出 bounce 局部最优 (R2 noise_std 0.97→0.83 探索不足)
         learning_rate = 1e-5
         num_learning_epochs = 2
         gamma = 0.994
