@@ -971,13 +971,37 @@ class X1DHStandEnv(LeggedRobot):
           保留 R3 核心不可欺骗性(base_lin_vel·sign(cmd)·has_cmd), 仅去掉 gate。
           这是 R3 contact-gate 的因果性反向消融: R3 假设'gate切断bounce速度奖励→
           涌现walk', 但 R4(已涌现walk)后 R5 证明 gate 反而压制真实前移 → 现撤销之。
+
+        Round-7 (loop iter7) fwd-net-displacement [形态级修复, 评审指示]:
+          R5/R6 联合证伪: '每帧body-vx'形态在gate开/关下都无法兼顾'不脱钩'+'压bounce'
+          (R5 gate=on 致脱钩; R6 gate=off 致bounce回升 zero_contact 0.187→0.300)。
+          根因: body-frame vx 对bounce振荡敏感(振荡时body vx非零), 且gate丢弃信息。
+          本轮换形态: 用 WORLD-frame base 速度(root_states世界xy)投影到'命令方向的世界向量'
+          (由base yaw + 机体cmd构建), 得到'每步在世界坐标命令方向上的净前移速度'。
+            reward = clamp(v_world · cmd_world_dir, 0, cap)/cap × has_cmd
+          (a)不脱钩: v_world是物理净位移速度, 不分支撑相, 忠实反映episode净前移。
+          (b)压bounce: bounce在原地振荡, 世界坐标净位移≈0(来回抵消), reward自然低,
+              无需contact-gate即可压制bounce——一举解决R5脱钩+R6 bounce回升。
+          (c)不可欺骗: v_world是世界系物理量, 无法靠body旋转/振荡虚增(必须真净前移)。
+          scale维持0.5(config)。yaw取base_euler_xyz[:,2]。
         """
-        vx = self.base_lin_vel[:, 0]                                          # body-frame 前向速度
-        cmd_dir = torch.sign(self.commands[:, 0])
-        has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).float()
+        # World-frame base xy 速度 (root_states[7:10]是世界系, base_lin_vel是body系)
+        v_world = self.root_states[:, 7:9]                                    # [N,2] 世界 xy 速度
+        yaw = self.base_euler_xyz[:, 2]                                       # [N] base 偏航
+        # 命令方向的世界向量: body前向(cos,sin)·cmd_x + body右向(-sin,cos)·cmd_y
+        fwd_x, fwd_y = torch.cos(yaw), torch.sin(yaw)                         # body前向(世界系)
+        right_x, right_y = -torch.sin(yaw), torch.cos(yaw)                    # body右向(世界系)
+        cmd_x, cmd_y = self.commands[:, 0], self.commands[:, 1]
+        dir_x = fwd_x * cmd_x + right_x * cmd_y                               # [N] 命令方向世界x分量
+        dir_y = fwd_y * cmd_x + right_y * cmd_y                               # [N] 命令方向世界y分量
+        dir_norm = torch.clamp(torch.sqrt(dir_x * dir_x + dir_y * dir_y), min=1e-6)
+        dir_x_n = dir_x / dir_norm                                            # 单位向量
+        dir_y_n = dir_y / dir_norm
+        # 在命令方向上的净前移速度 (世界坐标投影)
+        net_fwd = v_world[:, 0] * dir_x_n + v_world[:, 1] * dir_y_n           # [N] m/s
         cap = self.cfg.commands.max_curriculum                                # 0.6
-        r = torch.clamp(vx * cmd_dir, min=0., max=cap) / cap
-        # Round-6: 移除 contact-gate(* single_support 已删), 忠实反映每帧真实前移
+        r = torch.clamp(net_fwd, min=0., max=cap) / cap
+        has_cmd = (torch.norm(self.commands[:, :2], dim=1) > 0.05).float()
         return r * has_cmd
 
     def _reward_no_double_air(self):
