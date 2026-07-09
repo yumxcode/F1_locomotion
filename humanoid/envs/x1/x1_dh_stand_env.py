@@ -678,11 +678,23 @@ class X1DHStandEnv(LeggedRobot):
         """
         ①-a 线速度跟踪 — 独立 reward，保持独立梯度
         v4: 从 weighted average 拆出，exp 系数降低 k=5→2 扩大梯度区域
+
+        Round-3 (loop iter3) contact-gated-velocity [PIVOT]:
+          行走指令下仅单支撑帧(n_contact==1, 当前帧无 grace)赚取速度跟踪奖励。
+          bounce 的双脚腾空帧(n_contact≠1)速度跟踪奖励归零 → 逼迫策略转向真实
+          单支撑交替行走。这是函数形态改变(scale 不变), 直击两轮证据链确认的
+          bounce 稳健吸收态(survival + spoofable speed 双满足)。
+          stand 分支(奖励静止)不门控: 站立双脚着地(n_contact==2)是正确的, 且站立
+          reward 是"保持静止"非"前进速度", 门控会错误惩罚正确站立。
         """
         stand_command = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
         lin_vel_error = torch.sum(torch.square(
             self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         r = torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
+        # Round-3 contact-gate (PIVOT): walk 分支乘 single_support (n_contact==1, 当前帧, 无 grace)
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        single_support = (contact.float().sum(dim=1) == 1).float()
+        r = r * single_support
         r = torch.where(stand_command,
                         torch.exp(-torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1) / self.cfg.rewards.tracking_sigma),
                         r)
@@ -935,13 +947,21 @@ class X1DHStandEnv(LeggedRobot):
           - 真走: vx≈0.6 → 1.0
           - standing: has_cmd=0 → 0 (中立)
         不可欺骗: vx 是 base 实际速度(物理量)，无法靠振荡虚增。
+
+        Round-3 (loop iter3) contact-gated-velocity [PIVOT]:
+          再乘 single_support (n_contact==1, 当前帧无 grace)。bounce 双脚腾空帧
+          (62% 时间 n_contact≠1)的前向进度奖励归零。standing 段 has_cmd=0 已为0
+          不受影响。scale(0.4)不变, 仅改函数形态: reward=f(v)→f(v)·1_single_support。
         """
         vx = self.base_lin_vel[:, 0]                                          # body-frame 前向速度
         cmd_dir = torch.sign(self.commands[:, 0])
         has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).float()
         cap = self.cfg.commands.max_curriculum                                # 0.6
         r = torch.clamp(vx * cmd_dir, min=0., max=cap) / cap
-        return r * has_cmd
+        # Round-3 contact-gate (PIVOT): 仅单支撑帧赚前向进度奖励; bounce 双脚腾空帧归零
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        single_support = (contact.float().sum(dim=1) == 1).float()
+        return r * has_cmd * single_support
 
     def _reward_no_double_air(self):
         """
