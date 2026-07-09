@@ -445,7 +445,11 @@ class X1DHStandCfgPPO(LeggedRobotCfgPPO):
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
         entropy_coef = 0.01  # R3: 0.003→0.01, 促探索跳出 bounce 局部最优 (R2 noise_std 0.97→0.83 探索不足)
-        learning_rate = 1e-5
+        # Round-2 (loop iter1) ppo-lr-1e5-to-1e4: 历史 V1-V16/R1-R3 全部仅改 reward 却始终卡在
+        # bounce 局部最优。经核验 lr=1e-5 为 constant(DHPPO schedule='fixed', X1 配置未覆盖)，
+        # 且比本代码库自身默认 legged_robot_config=1e-3 低 100× → 策略极可能严重欠训练。
+        # 单变量 1e-5→1e-4 (标准运动控制 PPO 区间 [1e-4,1e-3] 的保守值), 仅此一处改动以保因果可归因。
+        learning_rate = 1e-4
         num_learning_epochs = 2
         gamma = 0.994
         lam = 0.9
