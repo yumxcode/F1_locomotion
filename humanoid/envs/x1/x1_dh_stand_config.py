@@ -410,6 +410,14 @@ class X1DHStandCfg(LeggedRobotCfg):
             #     both_air 指示 (scale 负 → 惩罚)
             #     bounce zero_contact 52% → raw 0.52 → 罚 -0.21; 真走 5% → 罚 -0.02
             no_double_air = -0.4
+            # === R4 (loop iter4) explicit-alternating-contact [正向吸引子, 路线转换] ===
+            # 三轮'削弱bounce'失败后,评审指出根因是 walk 吸引子太弱——single_foot_contact
+            # 仅判 n_contact==1、swing_lift 仅判抬脚,都不编码'左右交替',策略无需交替即可刷分。
+            # 本项用真实接触序列(非步态时钟)检测左右脚交替落地: 每次'新落地的脚 != 上次落地的脚'
+            # 触发 +1(落地事件驱动, 稀疏但直接编码交替性)。bounce 双脚同时落地不触发; 原地单脚
+            # 站立无交替也不触发。与 bounce/原地存活竞争净收益, 提供此前缺失的强正向 walk 吸引子。
+            # scale 0.5 ≈ single_foot_contact(0.8)与 swing_lift(0.4)之间, 量级可观察但不压制。
+            alternating_contact = 0.5
             # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
@@ -451,11 +459,16 @@ class X1DHStandCfgPPO(LeggedRobotCfgPPO):
         in_channels = X1DHStandCfg.env.frame_stack
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.01  # R3: 0.003→0.01, 促探索跳出 bounce 局部最优 (R2 noise_std 0.97→0.83 探索不足)
-        # Round-2 (loop iter1) ppo-lr-1e5-to-1e4: 历史 V1-V16/R1-R3 全部仅改 reward 却始终卡在
-        # bounce 局部最优。经核验 lr=1e-5 为 constant(DHPPO schedule='fixed', X1 配置未覆盖)，
-        # 且比本代码库自身默认 legged_robot_config=1e-3 低 100× → 策略极可能严重欠训练。
-        # 单变量 1e-5→1e-4 (标准运动控制 PPO 区间 [1e-4,1e-3] 的保守值), 仅此一处改动以保因果可归因。
+        # Round-4 (loop iter4) [评审必须: 抑制三轮稳定的 noise_std 暴涨发散]
+        # entropy_coef 0.01→0.005。R1-R3 中 Policy/mean_noise_std 从 1.05 暴涨到 ~4.0-4.4
+        # 且与 reward 下滑同步, 表明 entropy_coef=0.01 + adaptive-lr 驱动发散式探索, 会
+        # 掩盖新 alternating_contact reward 的效果。降一半以收敛探索。
+        entropy_coef = 0.005
+        # Round-4 (loop iter4) [评审建议: 干净消融, 去除 R1 起静默生效的 adaptive-lr confound]
+        # schedule='fixed' (覆盖 base legged_robot_config 继承的 'adaptive'/desired_kl=0.01)。
+        # adaptive-lr 三轮把 lr 在 [5.1e-5, 8.6e-3] 波动(last50 均值~3-4e-4), 无法干净归因。
+        # fixed 下 lr=1e-4 真正恒定, 新 reward 项的因果贡献可被干净判定。
+        schedule = 'fixed'
         learning_rate = 1e-4
         num_learning_epochs = 2
         gamma = 0.994

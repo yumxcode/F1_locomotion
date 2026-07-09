@@ -120,6 +120,11 @@ class X1DHStandEnv(LeggedRobot):
         self.single_contact_history = torch.zeros((self.num_envs, grace_frames), device=self.device)
         # V13: feet_airtime 需要的接触缓冲 (独立于旧 _reward_feet_air_time)
         self.airtime_contact_prev = torch.zeros((self.num_envs, 2), dtype=torch.bool, device=self.device)
+        # === Round-4 (loop iter4) explicit-alternating-contact 状态缓冲 ===
+        # alt_contact_prev: 上一步真实接触 (检测落地事件 first_contact)
+        # alt_last_foot: 上次落地的脚 (-1=未初始化/0=左/1=右), 交替判定基准
+        self.alt_contact_prev = torch.zeros((self.num_envs, 2), dtype=torch.bool, device=self.device)
+        self.alt_last_foot = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device)
         # === Round-1redo gait telemetry (行为无关，仅诊断) ===
         # 上轮 reward 指标无法证明是否真前向行走；加入 per-env 累计缓冲，
         # 在 reset_idx 时按 episode 均值上报为 Episode/ 指标。
@@ -579,6 +584,9 @@ class X1DHStandEnv(LeggedRobot):
         # V13: 重置 single_foot_contact 历史和 airtime 接触缓冲
         self.single_contact_history[env_ids] = 0.
         self.airtime_contact_prev[env_ids] = False
+        # Round-4: 重置 alternating-contact 序列缓冲
+        self.alt_contact_prev[env_ids] = False
+        self.alt_last_foot[env_ids] = -1
         # rand 0 or 0.5
         self.gait_start[env_ids] = torch.randint(0, 2, (len(env_ids),)).to(self.device)*0.5
         
@@ -983,6 +991,49 @@ class X1DHStandEnv(LeggedRobot):
         n_contact = contact.float().sum(dim=1)
         both_air = (n_contact == 0).float()
         return both_air
+
+    def _reward_alternating_contact(self):
+        """
+        ⭐ R4 (loop iter4) — explicit-alternating-contact [正向 walk 吸引子, 路线转换]
+
+        三轮'削弱bounce'(lr/grace/速度门控)均证明无效, 根因是 walk 吸引子在 reward
+        landscape 过弱——single_foot_contact 仅判 n_contact==1、swing_lift 仅判抬脚,
+        都不编码'左右交替', 策略无需交替即可在单脚站立相刷分。本项直接用真实接触序列
+        (非步态时钟) 编码交替性, 提供 bounce/原地存活此前缺失的强正向竞争对手。
+
+        机制(基于真实接触序列):
+          - 落地事件 first_contact = contact & ~alt_contact_prev  (脚从不接触到接触的过渡)
+          - 交替判定: 新落地的脚 == 另一只脚(即 != alt_last_foot)
+            · 左落 且 上次右落 → 交替 → +1
+            · 右落 且 上次左落 → 交替 → +1
+          - 不触发的情况:
+            · bounce 双脚同时落地(无'上次'另一只脚, 或同脚连落) → 0
+            · 原地单脚站立无交替落地事件 → 0
+            · 首次落地(alt_last_foot=-1) → 0 (无基准)
+          - 更新 alt_last_foot = 本次落地脚(右覆盖左, 故同时落地记录为右、不误判交替)
+
+        不可欺骗性:
+          - 同时落地(bounce): first_contact 两脚同时为真, alt_left 需 last==1 且 alt_right 需
+            last==0, 二者对同一 last 互斥 → 不触发(除非 last 恰为其中之一且只一只先落, 物理上
+            同时落地两脚 first_contact 同帧 → 按右覆盖更新 last, 下次需另一脚单落才触发)。
+          - 物理惯性使超快抖动交替难以稳定维持; swing_lift(forward_progress等) 塑造步态质量。
+        scale 0.5, 事件驱动稀疏, 步行约每半周期(cycle=0.9s → ~0.45s)一次交替落地。
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.        # [N,2]
+        # 落地事件: 当前接触且上一帧不接触
+        first_contact = contact & ~self.alt_contact_prev                  # [N,2]
+        last = self.alt_last_foot                                          # [N] (-1/0/1)
+        # 交替: 新落地的脚 != 上次落地的脚
+        alt_left  = first_contact[:, 0] & (last == 1)                      # 上次右、今左 → 交替
+        alt_right = first_contact[:, 1] & (last == 0)                      # 上次左、今右 → 交替
+        reward = alt_left.float() + alt_right.float()                      # [N] 0 or 1
+        # 更新 alt_last_foot: 0=左落, 1=右落 (右覆盖左; 同时落地记右且本次不判交替)
+        new_last = last.clone()
+        new_last = torch.where(first_contact[:, 0], torch.zeros_like(last), new_last)
+        new_last = torch.where(first_contact[:, 1], torch.ones_like(last), new_last)
+        self.alt_last_foot = new_last
+        self.alt_contact_prev = contact.clone()
+        return reward
 
     def _reward_landing_impact(self):
         """
