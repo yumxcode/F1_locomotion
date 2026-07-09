@@ -345,7 +345,14 @@ class X1DHStandCfg(LeggedRobotCfg):
         max_contact_force = 500  # V11-c: 300→500N (3.4×体重), 只惩罚极端冲击, 不与tracking冲突
         compliance_force_threshold = 300  # 保留（函数体仍在，scale=0 不影响）
         # V13: single_foot_contact 宽限期 (秒), van Marum 用 0.2s
-        single_contact_grace = 0.2
+        # Round-2 (loop iter2) sfc-grace-0p2-to-0p04: Round-1 TASK_20260709_014 诊断出
+        # bounce 的具体成吸引机制 = 此 0.2s 宽限期(20控制帧@dt=0.01s)被策略利用:
+        # 一次落地瞬间的单脚接触(实际单脚接触仅占32%时间)让其后整个~0.3s腾空弹跳都领
+        # '行走'奖励(reward触发率57%, 比实际单接触高25%)。收紧到 0.04s(4帧):
+        # 行走(单脚接触为主导状态)仍持续得 r=1; 弹跳(双脚离地65%)的reward传播窗口
+        # 从20帧缩到4帧, 切断其主要收益来源。van Marum 平台无强制步态时钟故0.2s可接受,
+        # 本 env 有强制0.9s步态时钟, 行走占空比0.6-0.7 → 单脚接触本就是常态, 无需长grace。
+        single_contact_grace = 0.04
         # V13: feet_airtime 最低空中时间阈值 (秒)
         # Round-1 修正 (airtime-cycle-consistency):
         #   van Marum 用 0.4s，但其平台 Digit 无强制步态时钟。本 env 有强制 0.9s
