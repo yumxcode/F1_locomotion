@@ -405,7 +405,12 @@ class X1DHStandCfg(LeggedRobotCfg):
             # ⑨-b forward_progress — 不可欺骗的前进 reward (用 base 实际前向速度)
             #     clamp(vx·sign(cmd), 0, 0.6)/0.6 — 必须真正前移才得分，振荡骗不到
             #     bounce(0.15m/s) raw≈0.25, 真走(0.6) raw≈1.0
-            forward_progress = 0.4
+            # Round-5 (loop iter5) fwd-progress-scale-2x: R4 诊断前向速度退化(fwd_vel
+            # 峰0.49@iter3300→last50 0.19, forward_progress奖励停滞0.077→0.074)——策略
+            # 学会交替步态后偏向稳定性而非前移。scale 0.4→0.8 翻倍前向梯度, 把'会走但慢'
+            # 推向'走得快'。有contact-gate(仅单支撑帧+真实vx)无hacking风险。步态基础已稳固,
+            # 此刻安全增强前向驱动。
+            forward_progress = 0.8
             # ⑨-c no_double_air — 反 bounce 惩罚 (直接打击双脚同时离地)
             #     both_air 指示 (scale 负 → 惩罚)
             #     bounce zero_contact 52% → raw 0.52 → 罚 -0.21; 真走 5% → 罚 -0.02
