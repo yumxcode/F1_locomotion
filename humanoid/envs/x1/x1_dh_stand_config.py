@@ -410,7 +410,11 @@ class X1DHStandCfg(LeggedRobotCfg):
             # 学会交替步态后偏向稳定性而非前移。scale 0.4→0.8 翻倍前向梯度, 把'会走但慢'
             # 推向'走得快'。有contact-gate(仅单支撑帧+真实vx)无hacking风险。步态基础已稳固,
             # 此刻安全增强前向驱动。
-            forward_progress = 0.8
+            # Round-6 (loop iter6) fwd-progress-degate: R5 关键发现 contact-gate 导致
+            # reward 与真实vx脱钩(奖励升但vx降)。移除 env.py 的 * single_support, scale
+            # 配套 0.8→0.5: ungating 后被gate丢弃的~30%非单支撑相位重新计入, raw signal
+            # 密度回升, 0.5 维持与 R4(0.8×gated)等效净梯度, 同时消除脱钩。
+            forward_progress = 0.5
             # ⑨-c no_double_air — 反 bounce 惩罚 (直接打击双脚同时离地)
             #     both_air 指示 (scale 负 → 惩罚)
             #     bounce zero_contact 52% → raw 0.52 → 罚 -0.21; 真走 5% → 罚 -0.02

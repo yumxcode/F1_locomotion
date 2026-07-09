@@ -960,16 +960,25 @@ class X1DHStandEnv(LeggedRobot):
           再乘 single_support (n_contact==1, 当前帧无 grace)。bounce 双脚腾空帧
           (62% 时间 n_contact≠1)的前向进度奖励归零。standing 段 has_cmd=0 已为0
           不受影响。scale(0.4)不变, 仅改函数形态: reward=f(v)→f(v)·1_single_support。
+
+        Round-6 (loop iter6) fwd-progress-degate [反向消融 R3 gate]:
+          R5 关键发现: contact-gate 导致 reward 与真实前向速度脱钩(reward升但vx降)。
+          gate 把非单支撑帧(双脚支撑/腾空)的真实vx一律归零, 策略可'维持单支撑相reward
+          同时在非单支撑相减少/不做净前移', 即 reward 不再忠实反映 episode 净前移。
+          移除 gate(回退 * single_support), 使 reward 忠实计入每帧真实vx, 消除脱钩。
+          scale 配套 0.8→0.5(config): ungating 后被 gate 丢弃的~30%相位重新计入,
+          raw signal 密度回升, 0.5 维持与 R4(0.8×gated)等效的净梯度量级。
+          保留 R3 核心不可欺骗性(base_lin_vel·sign(cmd)·has_cmd), 仅去掉 gate。
+          这是 R3 contact-gate 的因果性反向消融: R3 假设'gate切断bounce速度奖励→
+          涌现walk', 但 R4(已涌现walk)后 R5 证明 gate 反而压制真实前移 → 现撤销之。
         """
         vx = self.base_lin_vel[:, 0]                                          # body-frame 前向速度
         cmd_dir = torch.sign(self.commands[:, 0])
         has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).float()
         cap = self.cfg.commands.max_curriculum                                # 0.6
         r = torch.clamp(vx * cmd_dir, min=0., max=cap) / cap
-        # Round-3 contact-gate (PIVOT): 仅单支撑帧赚前向进度奖励; bounce 双脚腾空帧归零
-        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
-        single_support = (contact.float().sum(dim=1) == 1).float()
-        return r * has_cmd * single_support
+        # Round-6: 移除 contact-gate(* single_support 已删), 忠实反映每帧真实前移
+        return r * has_cmd
 
     def _reward_no_double_air(self):
         """
