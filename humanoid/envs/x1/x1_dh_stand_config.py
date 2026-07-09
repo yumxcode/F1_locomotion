@@ -414,7 +414,15 @@ class X1DHStandCfg(LeggedRobotCfg):
             # reward 与真实vx脱钩(奖励升但vx降)。移除 env.py 的 * single_support, scale
             # 配套 0.8→0.5: ungating 后被gate丢弃的~30%非单支撑相位重新计入, raw signal
             # 密度回升, 0.5 维持与 R4(0.8×gated)等效净梯度, 同时消除脱钩。
-            forward_progress = 0.5
+            # Round-7 (loop iter7): env.py 形态改为 world-frame 净位移(形态级修复脱钩), scale 维持 0.5。
+            # Round-8 (loop iter8) fwd-progress-scale-4x [评审指示方向A, 决定性测试多目标竞争假说]:
+            #   R5/R6/R7 三轮链条证明 fwd_vel 退化是'多目标reward竞争'——forward_progress
+            #   (scale0.5→reward0.186) 在reward总量中占比小, 被稳定性集群(single_foot_contact
+            #   0.687/swing_lift 0.189等)的累积梯度压制, 非形态问题。本轮 scale 0.5→2.0(4×),
+            #   使 forward_progress 跃升为最大单项(scaled ~0.74 > single_foot_contact 0.687),
+            #   直接压制稳定性集群偏向, 保留 R7 已验证的 world-frame 形态(早期同步好)。
+            #   若 fwd_vel 退化消失→证明量级竞争; 若步态崩溃→前向过度主导。最高杠杆单变量。
+            forward_progress = 2.0
             # ⑨-c no_double_air — 反 bounce 惩罚 (直接打击双脚同时离地)
             #     both_air 指示 (scale 负 → 惩罚)
             #     bounce zero_contact 52% → raw 0.52 → 罚 -0.21; 真走 5% → 罚 -0.02
