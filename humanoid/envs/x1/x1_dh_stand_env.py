@@ -966,13 +966,31 @@ class X1DHStandEnv(LeggedRobot):
           再乘 single_support (n_contact==1, 当前帧无 grace)。bounce 双脚腾空帧
           (62% 时间 n_contact≠1)的前向进度奖励归零。standing 段 has_cmd=0 已为0
           不受影响。scale(0.4)不变, 仅改函数形态: reward=f(v)→f(v)·1_single_support。
+
+        Round-10 (loop iter10) fwd-speed-threshold-bonus [非线性形态, 修复R9低速盆地]:
+          R9(obs-base-world-vel)证明 fwd_vel 低速是策略的真实reward偏好(非hacking,
+          因策略能观测真实速度仍不愿前移): linear forward_progress 在低速梯度太弱
+          (slope=0.4/0.6=0.67/m·s), 策略被锁在 vx≈0 盆地(R9 fwd_vel 末-0.015)。
+          本轮加门槛bonus超线性乘子: speed_factor = 1 + k·max(0, vx_dir - thresh)。
+            thresh=0.05m/s (低于R9峰0.077, 故策略可达, 能真实感受到悬崖);
+            k=2.0 (门槛上梯度翻倍)。
+          形态: vx<thresh 线性不变(保留低速探索信号); vx>thresh 超线性(base·(1+k·Δv)),
+          制造梯度悬崖把策略推出低速盆地。reward上限: vx=cap=0.6 → base1.0·(1+2·0.55)=2.1,
+          scale0.4→0.84(与single_foot_contact 0.69同量级, 不会像R8 4×scale那样主导致崩)。
+          保留R9 base-world-vel观测(消除hacking)与contact-gate(压bounce), 仅改形态单变量。
         """
         vx = self.base_lin_vel[:, 0]                                          # body-frame 前向速度
         cmd_dir = torch.sign(self.commands[:, 0])
         has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).float()
         cap = self.cfg.commands.max_curriculum                                # 0.6
-        r = torch.clamp(vx * cmd_dir, min=0., max=cap) / cap
-        # Round-3 contact-gate (PIVOT): 仅单支撑帧赚前向进度奖励; bounce 双脚腾空帧归零
+        vx_dir = vx * cmd_dir
+        base = torch.clamp(vx_dir, min=0., max=cap) / cap                     # 线性 [0,1]
+        # Round-10 门槛bonus超线性乘子: 低于thresh(0.05)梯度不变, 高于thresh梯度翻倍(k=2)
+        thresh = 0.05
+        k_bonus = 2.0
+        speed_factor = 1.0 + k_bonus * torch.clamp(vx_dir - thresh, min=0.0)   # ≥1, 随速度超线性增长
+        r = base * speed_factor
+        # Round-3 contact-gate: 仅单支撑帧赚前向进度奖励; bounce 双脚腾空帧归零
         contact = self.contact_forces[:, self.feet_indices, 2] > 5.
         single_support = (contact.float().sum(dim=1) == 1).float()
         return r * has_cmd * single_support
