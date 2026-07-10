@@ -423,7 +423,11 @@ class X1DHStandCfg(LeggedRobotCfg):
             # 触发 +1(落地事件驱动, 稀疏但直接编码交替性)。bounce 双脚同时落地不触发; 原地单脚
             # 站立无交替也不触发。与 bounce/原地存活竞争净收益, 提供此前缺失的强正向 walk 吸引子。
             # scale 0.5 ≈ single_foot_contact(0.8)与 swing_lift(0.4)之间, 量级可观察但不压制。
-            alternating_contact = 0.5
+            # Round-11 (loop iter11) alt-contact-scale-up: R10(里程碑, fwd_vel 0.418)已建前向+步态稳,
+            # 但gait一项未完全达标——single_contact 0.692(略低于walk目标0.7), alternating_contact
+            # reward 0.075(健康项最弱)。scale 0.5→0.7(+40%)增强交替吸引力, 目标推single>0.7且
+            # zero<0.15(物理可信度阈值)。R10 threshold-bonus独立保fwd, 不损前向速度。
+            alternating_contact = 0.7
             # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
