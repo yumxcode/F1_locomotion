@@ -515,6 +515,12 @@ class X1DHStandEnv(LeggedRobot):
             self.lagged_base_ang_vel * self.obs_scales.ang_vel,  # 3
             self.lagged_base_euler_xyz * self.obs_scales.quat,  # 3
             contact_mask.float(),  # 2 ⭐ 真实脚接触反馈 (左/右, 接触力>5N=1)
+            # Round-9 obs-base-world-vel: base 世界 xy 速度(2维), 让 actor 直接感知真实
+            # 净前移速度(此前仅 critic privileged 有 base_lin_vel)。root_states[7:9]是世界系
+            # 线速度(非机体), 用 obs_scales.lin_vel 缩放对齐。消除前向 reward hacking 的
+            # 结构性根基: yaw-cheating 会产生策略可观测到的不一致状态(投影reward高但真实
+            # 世界速度小), 使策略无法稳定地骗取 reward。
+            self.root_states[:, 7:9] * self.obs_scales.lin_vel,  # 2 ⭐ base 世界 xy 速度
         ), dim=-1)
 
         if self.cfg.env.num_single_obs == 48:
@@ -960,49 +966,16 @@ class X1DHStandEnv(LeggedRobot):
           再乘 single_support (n_contact==1, 当前帧无 grace)。bounce 双脚腾空帧
           (62% 时间 n_contact≠1)的前向进度奖励归零。standing 段 has_cmd=0 已为0
           不受影响。scale(0.4)不变, 仅改函数形态: reward=f(v)→f(v)·1_single_support。
-
-        Round-6 (loop iter6) fwd-progress-degate [反向消融 R3 gate]:
-          R5 关键发现: contact-gate 导致 reward 与真实前向速度脱钩(reward升但vx降)。
-          gate 把非单支撑帧(双脚支撑/腾空)的真实vx一律归零, 策略可'维持单支撑相reward
-          同时在非单支撑相减少/不做净前移', 即 reward 不再忠实反映 episode 净前移。
-          移除 gate(回退 * single_support), 使 reward 忠实计入每帧真实vx, 消除脱钩。
-          scale 配套 0.8→0.5(config): ungating 后被 gate 丢弃的~30%相位重新计入,
-          raw signal 密度回升, 0.5 维持与 R4(0.8×gated)等效的净梯度量级。
-          保留 R3 核心不可欺骗性(base_lin_vel·sign(cmd)·has_cmd), 仅去掉 gate。
-          这是 R3 contact-gate 的因果性反向消融: R3 假设'gate切断bounce速度奖励→
-          涌现walk', 但 R4(已涌现walk)后 R5 证明 gate 反而压制真实前移 → 现撤销之。
-
-        Round-7 (loop iter7) fwd-net-displacement [形态级修复, 评审指示]:
-          R5/R6 联合证伪: '每帧body-vx'形态在gate开/关下都无法兼顾'不脱钩'+'压bounce'
-          (R5 gate=on 致脱钩; R6 gate=off 致bounce回升 zero_contact 0.187→0.300)。
-          根因: body-frame vx 对bounce振荡敏感(振荡时body vx非零), 且gate丢弃信息。
-          本轮换形态: 用 WORLD-frame base 速度(root_states世界xy)投影到'命令方向的世界向量'
-          (由base yaw + 机体cmd构建), 得到'每步在世界坐标命令方向上的净前移速度'。
-            reward = clamp(v_world · cmd_world_dir, 0, cap)/cap × has_cmd
-          (a)不脱钩: v_world是物理净位移速度, 不分支撑相, 忠实反映episode净前移。
-          (b)压bounce: bounce在原地振荡, 世界坐标净位移≈0(来回抵消), reward自然低,
-              无需contact-gate即可压制bounce——一举解决R5脱钩+R6 bounce回升。
-          (c)不可欺骗: v_world是世界系物理量, 无法靠body旋转/振荡虚增(必须真净前移)。
-          scale维持0.5(config)。yaw取base_euler_xyz[:,2]。
         """
-        # World-frame base xy 速度 (root_states[7:10]是世界系, base_lin_vel是body系)
-        v_world = self.root_states[:, 7:9]                                    # [N,2] 世界 xy 速度
-        yaw = self.base_euler_xyz[:, 2]                                       # [N] base 偏航
-        # 命令方向的世界向量: body前向(cos,sin)·cmd_x + body右向(-sin,cos)·cmd_y
-        fwd_x, fwd_y = torch.cos(yaw), torch.sin(yaw)                         # body前向(世界系)
-        right_x, right_y = -torch.sin(yaw), torch.cos(yaw)                    # body右向(世界系)
-        cmd_x, cmd_y = self.commands[:, 0], self.commands[:, 1]
-        dir_x = fwd_x * cmd_x + right_x * cmd_y                               # [N] 命令方向世界x分量
-        dir_y = fwd_y * cmd_x + right_y * cmd_y                               # [N] 命令方向世界y分量
-        dir_norm = torch.clamp(torch.sqrt(dir_x * dir_x + dir_y * dir_y), min=1e-6)
-        dir_x_n = dir_x / dir_norm                                            # 单位向量
-        dir_y_n = dir_y / dir_norm
-        # 在命令方向上的净前移速度 (世界坐标投影)
-        net_fwd = v_world[:, 0] * dir_x_n + v_world[:, 1] * dir_y_n           # [N] m/s
+        vx = self.base_lin_vel[:, 0]                                          # body-frame 前向速度
+        cmd_dir = torch.sign(self.commands[:, 0])
+        has_cmd = (torch.abs(self.commands[:, 0]) > 0.05).float()
         cap = self.cfg.commands.max_curriculum                                # 0.6
-        r = torch.clamp(net_fwd, min=0., max=cap) / cap
-        has_cmd = (torch.norm(self.commands[:, :2], dim=1) > 0.05).float()
-        return r * has_cmd
+        r = torch.clamp(vx * cmd_dir, min=0., max=cap) / cap
+        # Round-3 contact-gate (PIVOT): 仅单支撑帧赚前向进度奖励; bounce 双脚腾空帧归零
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        single_support = (contact.float().sum(dim=1) == 1).float()
+        return r * has_cmd * single_support
 
     def _reward_no_double_air(self):
         """

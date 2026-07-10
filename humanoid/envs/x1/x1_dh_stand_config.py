@@ -42,7 +42,13 @@ class X1DHStandCfg(LeggedRobotCfg):
         short_frame_stack = 5   #short history step
         c_frame_stack = 3  #all histroy privileged obs num
         # Round-1 obs-contact-feedback: 47 proprio + 2 real binary foot-contact
-        num_single_obs = 49
+        # Round-9 (loop iter9) obs-base-world-vel [新轴: 观测空间]:
+        #   R5-R8 证明 forward-reward 工程是死胡同, 根因是 actor 从未观测真实质心速度
+        #   (base_lin_vel 仅在 critic privileged obs), 故前向控制开环、易被 yaw/振荡欺骗。
+        #   本轮把 base 世界 xy 速度(2维)加入 actor 观测 → num_single_obs 49→51。
+        #   让策略直接感知真实净前移速度, 消除 reward hacking 结构性根基。
+        #   reward config 已回退至 R4 Pareto 最优基线(forward_progress=0.4 R3 body-vx)。
+        num_single_obs = 51
         num_observations = int(frame_stack * num_single_obs)
         single_num_privileged_obs = 73
         single_linvel_index = 53
@@ -405,24 +411,7 @@ class X1DHStandCfg(LeggedRobotCfg):
             # ⑨-b forward_progress — 不可欺骗的前进 reward (用 base 实际前向速度)
             #     clamp(vx·sign(cmd), 0, 0.6)/0.6 — 必须真正前移才得分，振荡骗不到
             #     bounce(0.15m/s) raw≈0.25, 真走(0.6) raw≈1.0
-            # Round-5 (loop iter5) fwd-progress-scale-2x: R4 诊断前向速度退化(fwd_vel
-            # 峰0.49@iter3300→last50 0.19, forward_progress奖励停滞0.077→0.074)——策略
-            # 学会交替步态后偏向稳定性而非前移。scale 0.4→0.8 翻倍前向梯度, 把'会走但慢'
-            # 推向'走得快'。有contact-gate(仅单支撑帧+真实vx)无hacking风险。步态基础已稳固,
-            # 此刻安全增强前向驱动。
-            # Round-6 (loop iter6) fwd-progress-degate: R5 关键发现 contact-gate 导致
-            # reward 与真实vx脱钩(奖励升但vx降)。移除 env.py 的 * single_support, scale
-            # 配套 0.8→0.5: ungating 后被gate丢弃的~30%非单支撑相位重新计入, raw signal
-            # 密度回升, 0.5 维持与 R4(0.8×gated)等效净梯度, 同时消除脱钩。
-            # Round-7 (loop iter7): env.py 形态改为 world-frame 净位移(形态级修复脱钩), scale 维持 0.5。
-            # Round-8 (loop iter8) fwd-progress-scale-4x [评审指示方向A, 决定性测试多目标竞争假说]:
-            #   R5/R6/R7 三轮链条证明 fwd_vel 退化是'多目标reward竞争'——forward_progress
-            #   (scale0.5→reward0.186) 在reward总量中占比小, 被稳定性集群(single_foot_contact
-            #   0.687/swing_lift 0.189等)的累积梯度压制, 非形态问题。本轮 scale 0.5→2.0(4×),
-            #   使 forward_progress 跃升为最大单项(scaled ~0.74 > single_foot_contact 0.687),
-            #   直接压制稳定性集群偏向, 保留 R7 已验证的 world-frame 形态(早期同步好)。
-            #   若 fwd_vel 退化消失→证明量级竞争; 若步态崩溃→前向过度主导。最高杠杆单变量。
-            forward_progress = 2.0
+            forward_progress = 0.4
             # ⑨-c no_double_air — 反 bounce 惩罚 (直接打击双脚同时离地)
             #     both_air 指示 (scale 负 → 惩罚)
             #     bounce zero_contact 52% → raw 0.52 → 罚 -0.21; 真走 5% → 罚 -0.02
