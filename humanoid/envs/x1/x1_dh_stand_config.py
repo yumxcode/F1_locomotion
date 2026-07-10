@@ -389,7 +389,9 @@ class X1DHStandCfg(LeggedRobotCfg):
             tracking_lin_vel = 0.3    # R3: 0.6→0.3, 削弱 bounce 主要收益(spoofable: 0.48@0.6但实际前向仅22%)
             tracking_ang_vel = 0.5    # V12: 0.8→0.5
             # ② 行走涌现 — 单脚接触 (van Marum 的关键发现)
-            single_foot_contact = 0.8 # V13c: 1.0→0.8, 二值reward密度修正后与tracking平衡
+            # R12 (loop iter12) gait-phase-tracking [结构转向]: 禁用此离散事件reward——
+            # 11轮证明它可被hacking(n_contact==1瞬时状态可骗), 用gait_phase_tracking(连续相位跟踪)替代。
+            single_foot_contact = 0.0
             # ③ 步频正则化 — 空中时间 (van Marum 公式)
             feet_airtime = 0.3        # ⭐ 新增: (t_air - 0.4)·1_td
             # ④ 躯干姿态
@@ -427,7 +429,15 @@ class X1DHStandCfg(LeggedRobotCfg):
             # 但gait一项未完全达标——single_contact 0.692(略低于walk目标0.7), alternating_contact
             # reward 0.075(健康项最弱)。scale 0.5→0.7(+40%)增强交替吸引力, 目标推single>0.7且
             # zero<0.15(物理可信度阈值)。R10 threshold-bonus独立保fwd, 不损前向速度。
-            alternating_contact = 0.7
+            # R12 (loop iter12) gait-phase-tracking [结构转向]: 禁用此离散事件reward——
+            # R11证明它可被'双支撑内频繁交替'hacking(double_contact飙0.190)。用gait_phase_tracking替代。
+            alternating_contact = 0.0
+            # === R12 gait-phase-tracking [相位跟踪替代事件检测, Cassie/Digit范式] ===
+            # 连续相位跟踪reward: 用步态时钟(sin_pos)定义期望接触, 奖励实际接触与期望相位的
+            # 每帧连续匹配(cosine-consistency)。每帧密集可微, 不可被离散事件hack。
+            # 替代 single_foot_contact(0.8) + alternating_contact(0.7) 两项, scale 0.8
+            # 对齐原 single_foot_contact 量级(原主步态吸引子)。
+            gait_phase_tracking = 0.8
             # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===

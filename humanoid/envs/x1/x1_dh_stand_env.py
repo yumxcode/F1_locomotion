@@ -1059,6 +1059,43 @@ class X1DHStandEnv(LeggedRobot):
         self.alt_contact_prev = contact.clone()
         return reward
 
+    def _reward_gait_phase_tracking(self):
+        """
+        ⭐ R12 (loop iter12) gait-phase-tracking [结构转向: 相位跟踪替代事件检测]
+
+        范式转换(评审指示): 11轮reward工程证伪——基于离散接触事件检测的reward
+        (single_foot_contact/alternating_contact)天然可被hacking(R11暴露alternating_contact
+        被双支撑内频繁交替欺骗)。Cassie/Digit/MIT Cheetah行走控制用'步态时钟相位跟踪'
+        (连续、每帧密集、不可hack)替代事件检测。
+
+        机制: 用env已有步态时钟(_get_phase→sin_pos)定义'期望接触':
+          - sin_pos≥0 → 左脚应stance(接触), 右脚应swing
+          - sin_pos<0  → 右脚应stance, 左脚应swing
+          - |sin_pos|<0.1 → 双支撑(两脚都应接触)
+        实际接触: contact_forces[:, feet_indices, 2] > 5N。
+        连续匹配(Cassie-style contact-phase consistency): 每脚每帧
+          match = 期望contact AND实际contact ? +1 : (期望非contact AND实际非contact ? +1 : 0)
+        平均两脚, 每帧密集可微, 不可被双支撑内抖动hack(因相位跟踪连续)。
+
+        不可hack性:
+          - 双支撑内频繁交替: 期望相位也要求双接触, 不产生虚增(与alternating_contact不同)
+          - 原地单脚站: 期望相位要求swing脚离地, 不接触=匹配, 但tracking全程需跟随相位
+            周期变化, 单脚站无法持续匹配(相位在转)
+          - bounce双脚腾空: swing脚不接触=匹配, 但stance脚不接触=失配(主信号)
+
+        standing命令: r=1.0(中立, 同其他步态reward)。
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.0       # [N,2] 实际接触
+        stance_mask = self._get_stance_mask()                               # [N,2] 期望接触(1=stance)
+        # 匹配: 期望接触且接触(+1), 期望非接触且不接触(+1), 失配(0)
+        match_stance = stance_mask * contact.float()                        # 期望接触&接触
+        match_swing = (1.0 - stance_mask) * (~contact).float()             # 期望swing&不接触
+        match = match_stance + match_swing                                  # [N,2] ∈ {0,1}
+        r = torch.mean(match, dim=1)                                        # [N] 两脚平均
+        stand_cmd = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
+        r = torch.where(stand_cmd, torch.ones_like(r), r)
+        return r
+
     def _reward_landing_impact(self):
         """
         ⑧ 落地冲击惩罚 — V9: 降低阈值到 500N (≈3.4× 体重)
