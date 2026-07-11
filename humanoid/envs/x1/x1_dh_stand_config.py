@@ -353,6 +353,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         # 快走→快步频(Cassie/Digit/生物力学), 使相位跟踪与前移物理协同。
         # k=1.0: vx=0→cycle0.9s(慢步), vx=0.6(cap)→0.45s(快步)。基于cmd速度(非实际, 防hack)。
         gait_speed_coupling_k = 1.0
+        # Round-16 (loop iter16) fwd-progress-anneal [结构转向: 时间维度reward退火]:
+        # R16静态Pareto证明无点同时single>0.8且fwd>0.3。本轮加时间维度:
+        # forward_progress有效scale两阶段退火(乘子在_reward_forward_progress内应用):
+        #   阶段1(step < warmup): 因子=1.0, 有效scale=0.4(弱前向), gpt=1.0强→步态先建立(R16已证single>0.8)
+        #   阶段2(warmup→full): 因子线性1.0→max, 有效scale 0.4→0.4×max→前向驱动力增加推fwd>0.3
+        # 假设: 已建立的步态吸引子(gpt1.0)足够稳以抵抗前向增加, 保single>0.8同时fwd>0.3。
+        rew_fwd_anneal_warmup = 72000   # step (=3000 iter) 阶段1结束, 此前因子=1.0
+        rew_fwd_anneal_full = 120000    # step (=5000 iter) 退火完成, 因子=max
+        rew_fwd_anneal_max = 2.5        # 退火目标因子, 有效scale 0.4×2.5=1.0
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力

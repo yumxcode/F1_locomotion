@@ -1025,6 +1025,18 @@ class X1DHStandEnv(LeggedRobot):
         k_bonus = 2.0
         speed_factor = 1.0 + k_bonus * torch.clamp(vx_dir - thresh, min=0.0)   # ≥1, 随速度超线性增长
         r = base * speed_factor
+        # Round-16 fwd-progress-anneal: 两阶段时间退火乘子。
+        # 阶段1(step<warmup): 因子1.0(弱前向, 步态先建立); 阶段2: 线性1.0→max(前向驱动力增加)。
+        warmup = float(self.cfg.rewards.rew_fwd_anneal_warmup)
+        full = float(self.cfg.rewards.rew_fwd_anneal_full)
+        anneal_max = float(self.cfg.rewards.rew_fwd_anneal_max)
+        step = float(self.common_step_counter)
+        if full > warmup:
+            frac = min(1.0, max(0.0, (step - warmup) / (full - warmup)))
+            anneal_factor = 1.0 + (anneal_max - 1.0) * frac
+        else:
+            anneal_factor = anneal_max
+        r = r * anneal_factor
         # Round-3 contact-gate: 仅单支撑帧赚前向进度奖励; bounce 双脚腾空帧归零
         contact = self.contact_forces[:, self.feet_indices, 2] > 5.
         single_support = (contact.float().sum(dim=1) == 1).float()
