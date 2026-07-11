@@ -203,7 +203,7 @@ class X1DHStandCfg(LeggedRobotCfg):
         # 保守策略。本轮加DR课程: 核心DR项(摩擦/质量/COM/关节friction/damping/gains)的随机
         # 化范围按 dr_strength = min(1, common_step_counter/dr_curriculum_steps) 线性增长。
         # 早期(step0)范围=标称值(无随机), 后期逐步达满量。dr_curriculum_steps=96000(=4000iter×24step)。
-        dr_curriculum_steps = 96000  # 0→满量 线性增长的步数 (与R13最优窗口~iter4000对齐)
+        dr_curriculum_steps = 48000  # 0→满量 线性增长的步数 (R15: 96000→48000, 评审建议; iter2000达满量, 步态形成期iter1000-2000显著生效)
         randomize_friction = True
         friction_range = [0.2, 1.3]
         restitution_range = [0.0, 0.4]
