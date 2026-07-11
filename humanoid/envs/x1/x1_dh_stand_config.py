@@ -449,7 +449,7 @@ class X1DHStandCfg(LeggedRobotCfg):
             # 每帧连续匹配(cosine-consistency)。每帧密集可微, 不可被离散事件hack。
             # 替代 single_foot_contact(0.8) + alternating_contact(0.7) 两项, scale 0.8
             # 对齐原 single_foot_contact 量级(原主步态吸引子)。
-            gait_phase_tracking = 0.8
+            gait_phase_tracking = 1.0  # R16: 0.8→1.0(+25%), 评审首选reward轴, 目标推single_contact>0.8(R12相位跟踪曾达0.805); 增强相位跟踪吸引子
             # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
