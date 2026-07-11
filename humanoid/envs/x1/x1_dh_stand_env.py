@@ -204,6 +204,44 @@ class X1DHStandEnv(LeggedRobot):
         # stand mask == 1 means stand leg 
         return stance_mask
 
+    def _dr_strength(self):
+        """Round-14 dr-curriculum: DR 强度因子 0→1, 随 common_step_counter 线性增长。
+        step0=0(范围=标称值, 无随机), step=dr_curriculum_steps=1(满量随机)。"""
+        s = min(1.0, float(self.common_step_counter) / float(self.cfg.domain_rand.dr_curriculum_steps))
+        return max(0.0, s)
+
+    def randomize_rigid_props(self, env_ids):
+        """Round-14 override: 摩擦力随机化范围按 _dr_strength 向标称值(0.6, sim默认)收缩。"""
+        if self.cfg.domain_rand.randomize_friction:
+            s = self._dr_strength()
+            min_f, max_f = self.cfg.domain_rand.friction_range  # [0.2, 1.3]
+            nominal_f = 0.6  # sim/terrain 默认摩擦
+            # 收缩: 有效范围 = nominal ± s*(range - nominal)
+            eff_min = nominal_f + s * (min_f - nominal_f)
+            eff_max = nominal_f + s * (max_f - nominal_f)
+            self.friction[env_ids, :] = torch_rand_float(eff_min, eff_max, (len(env_ids), 1), device=self.device)
+
+    def randomize_rigid_body_props(self, env_ids):
+        """Round-14 override: base mass / link mass / COM 随机化范围按 _dr_strength 向标称(0)收缩。"""
+        s = self._dr_strength()
+        if self.cfg.domain_rand.randomize_base_mass:
+            min_payload, max_payload = self.cfg.domain_rand.added_mass_range  # [-3, 3]
+            eff_min = s * min_payload
+            eff_max = s * max_payload
+            self.payload_masses[env_ids] = torch_rand_float(eff_min, eff_max, (len(env_ids), 1), device=self.device)
+        if self.cfg.domain_rand.randomize_link_mass:
+            min_lm, max_lm = self.cfg.domain_rand.added_link_mass_range  # [0.9, 1.1]
+            nominal_lm = 1.0
+            eff_min = nominal_lm + s * (min_lm - nominal_lm)
+            eff_max = nominal_lm + s * (max_lm - nominal_lm)
+            self.link_masses[env_ids] = torch_rand_float(eff_min, eff_max, (len(env_ids), self.num_bodies-1), device=self.device)
+        if self.cfg.domain_rand.randomize_com:
+            comx, comy, comz = self.cfg.domain_rand.com_displacement_range  # each [-0.05, 0.05]
+            self.com_displacements[env_ids, :] = torch.cat((torch_rand_float(s*comx[0], s*comx[1], (len(env_ids), 1), device=self.device),
+                                                            torch_rand_float(s*comy[0], s*comy[1], (len(env_ids), 1), device=self.device),
+                                                            torch_rand_float(s*comz[0], s*comz[1], (len(env_ids), 1), device=self.device)),
+                                                            dim=-1)
+
     def generate_gait_time(self,envs):
         if len(envs) == 0:
             return

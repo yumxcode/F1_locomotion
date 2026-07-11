@@ -198,6 +198,12 @@ class X1DHStandCfg(LeggedRobotCfg):
             contact_collection = 2
 
     class domain_rand(LeggedRobotCfg.domain_rand):
+        # Round-14 (loop iter14) dr-curriculum [结构转向, 内核指示]:
+        # 13轮首次触及DR(此前全程满量)。R13证明架构正确但后期fwd_vel回落源于满量DR强制
+        # 保守策略。本轮加DR课程: 核心DR项(摩擦/质量/COM/关节friction/damping/gains)的随机
+        # 化范围按 dr_strength = min(1, common_step_counter/dr_curriculum_steps) 线性增长。
+        # 早期(step0)范围=标称值(无随机), 后期逐步达满量。dr_curriculum_steps=96000(=4000iter×24step)。
+        dr_curriculum_steps = 96000  # 0→满量 线性增长的步数 (与R13最优窗口~iter4000对齐)
         randomize_friction = True
         friction_range = [0.2, 1.3]
         restitution_range = [0.0, 0.4]
