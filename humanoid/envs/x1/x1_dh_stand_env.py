@@ -169,6 +169,22 @@ class X1DHStandEnv(LeggedRobot):
         else:
             phase = self.episode_length_buf * self.dt / cycle_time + self.gait_start
 
+        # Round-13 (loop iter13) speed-coupled-gait-clock [结构转向]:
+        # 把固定cycle_time改为速度耦合: cycle_time_eff = cycle_time/(1+k·vx_cmd_norm)。
+        # 快走→快步频(Cassie/Digit/生物力学), 使相位跟踪与前向progress物理协同——
+        # 跟踪相位需更快迈步→需更快前移, 消除R12的'步态-前移独立竞争'权衡。
+        # 基于cmd速度(非实际vx)防hack。standing命令(stand_cmd)不耦合(保持cycle_time)。
+        k = self.cfg.rewards.gait_speed_coupling_k
+        if k > 0:
+            vx_cmd_norm = torch.abs(self.commands[:, 0]) / self.cfg.commands.max_curriculum  # [N] 0~1
+            cycle_time_eff = cycle_time / (1.0 + k * vx_cmd_norm)                            # 快cmd→短cycle
+            # 重算相位: 用eff cycle_time(站立命令cycle_time_eff=cycle_time, 因vx_cmd=0)
+            if self.cfg.commands.sw_switch:
+                stand_cmd = (torch.norm(self.commands[:, :3], dim=1) <= self.cfg.commands.stand_com_threshold)
+                phase = (self.phase_length_buf * self.dt / cycle_time_eff + self.gait_start) * (~stand_cmd)
+            else:
+                phase = self.episode_length_buf * self.dt / cycle_time_eff + self.gait_start
+
         # phase continue increase，if want robot stand, set 0
         return phase
 

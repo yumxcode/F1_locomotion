@@ -341,6 +341,12 @@ class X1DHStandCfg(LeggedRobotCfg):
         min_swing_clearance = 0.03
         feet_to_ankle_distance = 0.041
         cycle_time = 0.9
+        # Round-13 (loop iter13) speed-coupled-gait-clock [结构转向, 内核指示]:
+        # R12相位跟踪达成步态目标但fwd_vel低(0.201), 根因是固定cycle_time使相位跟踪
+        # 与前向reward独立竞争。速度耦合: cycle_time_eff = cycle_time/(1+k·vx_cmd_norm)。
+        # 快走→快步频(Cassie/Digit/生物力学), 使相位跟踪与前移物理协同。
+        # k=1.0: vx=0→cycle0.9s(慢步), vx=0.6(cap)→0.45s(快步)。基于cmd速度(非实际, 防hack)。
+        gait_speed_coupling_k = 1.0
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
