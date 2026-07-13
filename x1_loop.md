@@ -17,7 +17,7 @@
   - orchestrator.jsonl
 
   2. 每轮 loop
-  图中至少包含这些阶段：
+  图中包含这些阶段：
   - load_state：读取当前 task_spec/progress/directions/finding 摘要
   - choose_direction：根据 directions_tried 选择一个与历史不同的方向
   - research_design_train：执行本轮设计、实现、远端训练
@@ -43,6 +43,7 @@
 
   4. structural pivot
   当 stale_count >= 2 时，不要只调参数，要改变结构性约束或研究框架，例如：
+  - 前置：充分调研前沿进展，调研相关重点论文（高置信度的）
   - 从相反假设出发
   - 换数据源/证据类型
   - 找跨领域结构相似案例

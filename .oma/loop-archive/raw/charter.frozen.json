@@ -1,0 +1,222 @@
+{
+  "id": "x1-walking-control",
+  "version": 1,
+  "goal": "使用强化学习（PPO/DHPPO）训练 AgiBot X1 人形机器人实现稳定、自然的前进行走步态。每轮迭代选择一个与历史不同的研究方向（reward 设计、curriculum、观测空间、domain randomization、网络架构、PPO 超参），在远端 Gradmotion 平台训练验证，提取可归因的结构化 findings，逐步逼近交替步态涌现与稳定行走的目标。",
+  "observables": [
+    {
+      "name": "new_findings",
+      "source": {
+        "from": "judge",
+        "key": "new_findings_count"
+      }
+    },
+    {
+      "name": "results_improved",
+      "source": {
+        "from": "judge",
+        "key": "results_improved"
+      }
+    }
+  ],
+  "meters": [
+    {
+      "name": "iteration",
+      "inc": "every_round"
+    },
+    {
+      "name": "stale_count",
+      "incWhen": "new_findings == 0 || !results_improved",
+      "resetWhen": "new_findings > 0 && results_improved"
+    }
+  ],
+  "tripwires": [
+    {
+      "when": "stale_count >= 4",
+      "then": {
+        "act": "escalate",
+        "reason": "连续多轮无新进展或结果变差，需人工介入审查研究方向",
+        "onResume": {
+          "resetMeters": [
+            "stale_count"
+          ]
+        }
+      }
+    },
+    {
+      "when": "stale_count >= 2",
+      "then": {
+        "act": "pivot"
+      }
+    }
+  ],
+  "gates": {
+    "findings_gate": {
+      "kind": "judge",
+      "evidence": [
+        "drafts/findings_draft.json",
+        "ledger/findings.jsonl"
+      ],
+      "rubric": "评审本轮 findings（drafts/findings_draft.json）相对于全部历史 findings（ledger/findings.jsonl）是否有实质贡献。new_findings_count：本轮 findings 中不与历史重复且含可归因结论的条数（'训练跑完了'不算，'single_foot_contact scale=0.8 时 episode_length 提升 40%'算）。results_improved：关键训练指标（mean_reward、mean_episode_length、single_foot_contact、tracking_lin_vel）相比之前有正向变化。reward hacking 判据：高 reward 但步态不自然（拖脚、蹲走、扭胯前进、双脚同时离地）不算改善。goal_satisfied：mean_episode_length 行走时 > 500 步（10s）、single_foot_contact reward > 0.8、实际前向速度 > 0.3 m/s、步态物理可信（交替单脚接触、非跳跃/拖步）。"
+    }
+  },
+  "seats": {
+    "worker": {
+      "context": "lineage_loop",
+      "prompt": "## 领域：X1 人形机器人行走控制 RL 研究\n\n### 选方向\n从胶囊的「已试方向」和「近期发现」出发，选一个与历史不同的研究方向。每轮只改一个变量族，确保因果可归因。可用维度：\n- **Reward 设计**：reward 项 scale 调整、新增/移除 reward 项、tracking_sigma、airtime_threshold、single_contact_grace\n- **Curriculum**：速度指令渐进范围、地形类型配比（terrain_dict）、步态类型比例（gait 列表）\n- **观测空间**：frame_stack 长度、特权观测内容、obs_scales 归一化、noise_level\n- **Domain Randomization**：push 强度、摩擦/质量范围、joint friction/damping/armature 范围\n- **网络架构**：actor/critic hidden dims、CNN kernel/stride/filter、init_noise_std\n- **PPO 超参**：learning_rate、entropy_coef、gamma、lam、num_mini_batches\n\n### 读码 + 设计\n先 read_file 读 humanoid/envs/x1/x1_dh_stand_config.py（当前 reward scales + PPO 超参 + DR 范围）和 x1_dh_stand_env.py（reward 计算逻辑），理解每个变量的物理含义和数值量级。读 .oma/designs/design-unified-reward.md 了解当前设计 V13 原理、已验证的工作模式和消融计划。读 .oma/memory.md 的 Dead Ends 表——绝不重复已验证失败的方向。设计前先用 python 或手算估算预期 reward 量级、梯度方向，确认数值合理后再改代码。如需参考最新方法，spawn 单个子代理串行搜论文（spawn_sub_agent），拿到方案后再继续设计。\n\n### 实现\n修改 humanoid/ 下的代码后，git add + commit + push 到远端（https://github.com/yumxcode/F1_locomotion.git，当前分支）。必须 push 成功——Gradmotion 从远端拉取代码。\n\n### 提交远端训练\n加载 gradmotion skill（skill(action=\"load\", name=\"gradmotion\")），按 skill 最小可运行 JSON 模版构建 create-train.json，必须包含 taskBaseInfo + taskCodeInfo 两层嵌套：\n- taskBaseInfo: projectId=\"PRO_20251113_021\", taskType=\"1\", trainType=\"1\", goodsId=\"ESKU000001\", imageId=\"BJX00000001\", imageVersion=\"V000124\", personalDataPath=\"/personal\"\n- taskCodeInfo: codeType=\"2\", codeUrl 用 [{\"codeUrl\":\"https://github.com/yumxcode/F1_locomotion.git\",\"versionType\":\"1\",\"versionName\":\"<当前分支>\"}] 格式, mainCodeUri=\"F1_locomotion/humanoid/scripts/train.py\", startScript=\"gm-run F1_locomotion/humanoid/scripts/train.py --task=x1_dh_stand --headless --max_iterations=15000\"\n\n用 account-pool get --json 获取 API key（提取 api_key 字段），所有 gm 命令一律加 GM_API_KEY=$KEY 前缀（不要用 gm auth login，keychain 会覆盖）。先 GM_API_KEY=$KEY gm --yes task create --file ./create-train.json，取返回 taskId，再 GM_API_KEY=$KEY gm task run --task-id <id>。用完的临时 JSON 立即删除。\n\n提交训练后立刻调 timer(30, \"等待 Gradmotion 训练 30 分钟后检查进展\")。\n\n### 收割训练（被 timer 唤醒后）\nGM_API_KEY=$KEY gm task info --task-id <id> 检查任务状态（3=运行中, 5=完成, 6=失败）。\nGM_API_KEY=$KEY gm task data get --task-id <id> --data-key \"Train/mean_reward\" --sampling-mode precise 查看 reward 曲线。运行中的任务只能用 precise 模式。\n\n平台期判断：取最近 50+ 个数据点，若 reward 无上升趋势（flat 或下降），判定进入平台期。进入平台期且无明显改进倾向 → GM_API_KEY=$KEY gm --yes task stop --task-id <id> 终止训练，进入 findings 提取。仍在改善 → 再次 timer(30,...) 继续等。任务已完成或失败 → 直接提取。\n\n账号余额不足（报 code 1.002056e+06 或 \"balance insufficient\"）：先确认是当前 GM_API_KEY 对应账号报错，再 account-pool remove <该账号 id>，然后 account-pool get 取新 key，用新 GM_API_KEY 前缀重试。\n\n### 提取发现\n从训练数据提取关键指标：mean_reward 趋势、mean_episode_length、各 reward 分项（single_foot_contact、tracking_lin_vel、feet_airtime 等）。\n判断本轮效果：\n- reward 是否改善（相比胶囊中的近期发现数值）\n- 步态是否改善（交替步态涌现？episode 是否延长？）\n- 是否有 reward hacking 迹象（高 reward 但步态不自然：拖脚走、蹲着走、扭胯前进、双脚同时离地）\n总结本轮的新发现——每条发现必须包含明确的 claim（结论）和 evidence（数值依据）。",
+      "tools": [
+        "read_file",
+        "grep",
+        "glob",
+        "edit_file",
+        "write_file",
+        "bash",
+        "spawn_sub_agent"
+      ],
+      "budgetPerRound": {
+        "usd": 4,
+        "turns": 80,
+        "wallclockMin": 60
+      }
+    },
+    "judge": {
+      "context": "isolated",
+      "prompt": "你是 X1 人形机器人行走控制研究的评审者。对比本轮 findings（drafts/findings_draft.json）与历史 findings（ledger/findings.jsonl），判断是否有实质贡献。\n\nnew_findings_count：本轮 findings 中有多少条是真正新增的——不与历史 findings 重复、且包含可归因的结论（不是「训练跑完了」这种事实陈述，而是「single_foot_contact scale 0.8→1.0 使 episode_length 从 200 提升到 450」这种有数值支撑的因果发现）。\n\nresults_improved：本轮训练结果是否相比之前有改善。依据 findings 中的 evidence（reward 数值、episode length、步态质量指标）。「改善」指关键指标有正向变化。reward hacking 判据：高 reward 但步态不自然（拖脚、蹲走、扭胯、bounce）不算改善。\n\ngoal_satisfied：X1 是否已实现稳定行走——mean_episode_length 行走时 > 500 步（10s）、single_foot_contact reward > 0.8、实际前向速度 > 0.3 m/s、步态物理可信。\n\n输出 return_result data 含 new_findings_count (int)、results_improved (bool)、goal_satisfied (bool)。",
+      "inputs": [
+        "drafts/findings_draft.json",
+        "ledger/findings.jsonl"
+      ],
+      "budgetPerRound": {
+        "usd": 0.5,
+        "turns": 10
+      }
+    },
+    "pivoter": {
+      "context": "isolated",
+      "prompt": "你是 X1 行走控制研究的结构性转向顾问。当前研究方向已连续 stale，需要结构性转向——不是调参数，而是改变约束框架。\n\n读 ledger/directions.json 了解已试方向，读 ledger/findings.jsonl 了解已发现的事实和已验证的失败模式。\n\n转向策略（选择一条或组合）：\n1. 从相反假设出发：当前在加强 single_foot_contact，反过来试移除它看策略学什么\n2. 换证据源/分析维度：从 reward 曲线转向分析 gait CSV 回放、策略可视化、GRF 分布\n3. 跨领域类比：参考 Digit/Cassie/ANYmal 的行走控制方案，移植关键思想\n4. 改变评估指标：当前用 mean_reward，转向用步态对称性、CoT、或 contact timing\n5. 改变环境假设：当前平地+满 DR，试减少 DR 范围或改地形 curriculum\n6. 改变 reward 架构：当前用 van Marum 最小集，试回退到工程化步态时钟方案或混合方案\n\n输出一条具体的结构化 directive：建议下一轮换什么方向、为什么（引用已有 findings 作为依据）、预期影响。写入 drafts/direction.json。",
+      "inputs": [
+        "ledger/directions.json",
+        "ledger/findings.jsonl"
+      ]
+    },
+    "finalizer": {
+      "context": "isolated",
+      "prompt": "你是 X1 行走控制研究的最终报告撰写者。基于 ledger/progress.json（迭代轮次、最佳指标、总发现数、stale 状态）和 ledger/findings.jsonl（全部 findings），撰写一段面向研究团队的叙事总结：\n1. 成果：哪些 findings 被验证有效、当前最佳训练结果及指标、已达成的里程碑\n2. 未竟事项：哪些方向未尝试、哪些 milestone 未达成、当前瓶颈\n3. 后续建议：下一步优先做什么、哪些 dead end 不必再试",
+      "inputs": [
+        "ledger/progress.json",
+        "ledger/findings.jsonl"
+      ]
+    }
+  },
+  "budgets": {
+    "perRound": {
+      "usd": 5
+    },
+    "lifetime": {
+      "rounds": 20,
+      "usd": 100
+    }
+  },
+  "health": {
+    "staleWhen": "stale_count > 0"
+  },
+  "writeScope": [
+    "humanoid/**"
+  ],
+  "frozen": {
+    "meterAsts": {
+      "iteration": {},
+      "stale_count": {
+        "incWhen": {
+          "kind": "binary",
+          "op": "||",
+          "left": {
+            "kind": "binary",
+            "op": "==",
+            "left": {
+              "kind": "ref",
+              "name": "new_findings"
+            },
+            "right": {
+              "kind": "lit",
+              "value": 0
+            }
+          },
+          "right": {
+            "kind": "unary",
+            "op": "!",
+            "operand": {
+              "kind": "ref",
+              "name": "results_improved"
+            }
+          }
+        },
+        "resetWhen": {
+          "kind": "binary",
+          "op": "&&",
+          "left": {
+            "kind": "binary",
+            "op": ">",
+            "left": {
+              "kind": "ref",
+              "name": "new_findings"
+            },
+            "right": {
+              "kind": "lit",
+              "value": 0
+            }
+          },
+          "right": {
+            "kind": "ref",
+            "name": "results_improved"
+          }
+        }
+      }
+    },
+    "tripwireAsts": [
+      {
+        "kind": "binary",
+        "op": ">=",
+        "left": {
+          "kind": "ref",
+          "name": "stale_count"
+        },
+        "right": {
+          "kind": "lit",
+          "value": 4
+        }
+      },
+      {
+        "kind": "binary",
+        "op": ">=",
+        "left": {
+          "kind": "ref",
+          "name": "stale_count"
+        },
+        "right": {
+          "kind": "lit",
+          "value": 2
+        }
+      }
+    ],
+    "healthAst": {
+      "kind": "binary",
+      "op": ">",
+      "left": {
+        "kind": "ref",
+        "name": "stale_count"
+      },
+      "right": {
+        "kind": "lit",
+        "value": 0
+      }
+    },
+    "declaredIdentifiers": [
+      "budget.lifetime.exhausted",
+      "iteration",
+      "new_findings",
+      "results_improved",
+      "stale_count"
+    ],
+    "frozenAt": 1783562241916
+  }
+}

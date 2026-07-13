@@ -1,0 +1,4 @@
+{
+  "key": "fwd-progress-anneal",
+  "rationale": "结构性转向(内核指示reward-curriculum-annealing): R16证明静态reward无点同时满足single>0.8且fwd>0.3(Pareto前沿), 但R13最优窗口证明策略capability可同时三目标。矛盾=训练动力学问题。本轮加时间维度: forward_progress有效scale两阶段退火——阶段1(iter0-3000)因子1.0(有效scale0.4弱前向), gpt=1.0强→步态先建立到single>0.8(R16已证); 阶段2(iter3000-5000)因子线性退火到2.5(有效scale0.4→1.0)→前向驱动力增加把fwd_vel推>0.3。假设: 已建立的步态吸引子(gpt1.0)足够稳以抵抗前向增加, 保single>0.8。这是首次时间维度reward调度, 突破静态Pareto前沿。保留R16基线(gpt1.0+速度耦合+threshold-bonus+obs+DR课程)。"
+}
