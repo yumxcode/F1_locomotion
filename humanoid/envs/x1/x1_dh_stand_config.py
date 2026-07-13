@@ -346,7 +346,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         # 故 0.03m 门控使 bounce 得 0、stride 得分。物理依据：R1redo diag_foot_height_diff=6.8mm。
         min_swing_clearance = 0.03
         feet_to_ankle_distance = 0.041
-        cycle_time = 0.9
+        # Loop-v2 Round-1 (gait-cadence-slow) [新轴: 步态时钟周期, 正交于reward/obs/DR]:
+        # 收割TASK_20260711_135(anneal)后确认持续瓶颈是步态质量而非前向能力——fwd可被推到
+        # 0.58-1.0m/s但double_contact始终0.06-0.09(真实行走0.2-0.3)、zero_contact 0.17-0.21
+        # (bounce)、single从未破0.8(峰0.789)。cycle_time自首提交0.9s从未被触碰。
+        # 0.9→1.0s放缓步频: 更长支撑相→更多双支撑重叠(double_contact↑)、更少腾空(zero_contact↓),
+        # 给步态更多时间建立干净交替单支撑。真实人行走stride~1.0-1.2s,X1的0.9s偏快。
+        # 保留speed-coupling(k=1.0): cycle_time=1.0下 vx=0→1.0s, vx=0.6(cap)→0.625s(仍合理快步)。
+        # airtime_threshold=0.30s 与新cycle仍自洽(max airtime=0.5s,自然airtime0.3-0.35s)。
+        cycle_time = 1.0
         # Round-13 (loop iter13) speed-coupled-gait-clock [结构转向, 内核指示]:
         # R12相位跟踪达成步态目标但fwd_vel低(0.201), 根因是固定cycle_time使相位跟踪
         # 与前向reward独立竞争。速度耦合: cycle_time_eff = cycle_time/(1+k·vx_cmd_norm)。
@@ -359,9 +367,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         #   阶段1(step < warmup): 因子=1.0, 有效scale=0.4(弱前向), gpt=1.0强→步态先建立(R16已证single>0.8)
         #   阶段2(warmup→full): 因子线性1.0→max, 有效scale 0.4→0.4×max→前向驱动力增加推fwd>0.3
         # 假设: 已建立的步态吸引子(gpt1.0)足够稳以抵抗前向增加, 保single>0.8同时fwd>0.3。
+        # === Loop-v2 Round-1 (gait-cadence-slow): 回退anneal以隔离cycle_time单变量 ===
+        # TASK_20260711_135收割结论: anneal(2.5×)在iter3000-4000温和档确实同时提升single(0.67->0.74)
+        # 和fwd(0.31->0.42)(部分打破静态Pareto), 但满档(iter5000+)OVERSHOOT——fwd飙到0.58-1.0而
+        # gpt崩0.74->0.22、tracking_lin_vel崩0.13->0.01(无视指令狂奔)、zero 0.20、double 0.06。
+        # 把anneal_max设1.0使退火因子恒=1.0(=禁用anneal), 恢复R16 forward_progress(threshold-bonus,
+        # scale0.4)。本轮=R16+cycle_time=1.0单变量, 干净归因步频对步态质量的影响。
         rew_fwd_anneal_warmup = 72000   # step (=3000 iter) 阶段1结束, 此前因子=1.0
         rew_fwd_anneal_full = 120000    # step (=5000 iter) 退火完成, 因子=max
-        rew_fwd_anneal_max = 2.5        # 退火目标因子, 有效scale 0.4×2.5=1.0
+        rew_fwd_anneal_max = 1.0        # Loop-v2 R1: 2.5->1.0 禁用anneal(因子恒1.0),恢复R16基线
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
