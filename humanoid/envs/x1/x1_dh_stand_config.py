@@ -454,6 +454,15 @@ class X1DHStandCfg(LeggedRobotCfg):
             #     线性 ramp: clamp(lift/0.05, 0, 1)×swing_mask
             #     bounce(3.4mm) raw≈0.068, 真跨步(5cm) raw≈1.0 — 始终正向梯度鼓励抬脚
             swing_lift = 0.4
+            # Loop-v2 Round-3 (swing-foot-forward) [新增reward项: 步幅长度信号]:
+            # R2诊断: fwd停滞0.27-0.29(combo点single>0.8∧fwd>0.3有123个,fwd达0.4-0.57)。
+            # 策略能力上能快走但默认短步幅碎步——swing_lift(0.4)只奖励抬脚UP不奖励向前REACH。
+            # swing_foot_forward奖励摆动脚世界系x速度(向前迈),capped 0.5m/s,swing-gated,cmd-gated。
+            # 与swing_lift配对=完整摆动质量信号(抬脚+迈步)。scale 0.4=同swing_lift,不主导。
+            # 数值估算: vx=0.4(目标)步幅0.3m→脚速~0.8m/s capped 0.5→raw~0.25/frame×0.4scale=0.10;
+            #          vx=0.27(现状)步幅0.15m→脚速~0.4→raw~0.13/frame×0.4scale=0.05。差距0.05/frame有梯度。
+            # 不可hack性: forward_progress(base速度)不奖励原地迈步; gpt要求正确接触相位。
+            swing_foot_forward = 0.4
             # ⑨-b forward_progress — 不可欺骗的前进 reward (用 base 实际前向速度)
             #     clamp(vx·sign(cmd), 0, 0.6)/0.6 — 必须真正前移才得分，振荡骗不到
             #     bounce(0.15m/s) raw≈0.25, 真走(0.6) raw≈1.0
