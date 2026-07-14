@@ -56,7 +56,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         num_actions = 12
         num_envs = 4096
         episode_length_s = 24 #episode length in seconds
-        use_ref_actions = False
+        # Loop-v2 Round-4 (reference-gait-template) [STRUCTURAL PIVOT: 退出奖励工程范式]:
+        # 3轮标量化奖励工程(gait-cadence/moderate-anneal/swing-foot-forward)均在前向-步态Pareto墙内
+        # 调参。本轮范式转换:use_ref_actions=True使步态时钟生成的摆动轨迹(compute_ref_state)直接注入
+        # 动作空间——策略的输出变为对参考步态模板的修正(residual),而非从零发现步态。
+        # 机制:step()中 actions += ref_action(=2×swing_delta);target=0.5×(policy+ref_action)+default
+        #   → policy_output=0时 target=swing_delta+default=ref_dof_pos(参考即基准)。
+        # 与ref_joint_pos tracking reward(scale1.0)配对=DeepMimic式完整参考跟踪:
+        #   动作注入提供起点,tracking reward防止漂移。gpt(contact phase)保持提供接触时序约束。
+        use_ref_actions = True
         num_commands = 5 # sin_pos cos_pos vx vy vz
 
     class safety:
@@ -375,16 +383,7 @@ class X1DHStandCfg(LeggedRobotCfg):
         # scale0.4)。本轮=R16+cycle_time=1.0单变量, 干净归因步频对步态质量的影响。
         rew_fwd_anneal_warmup = 72000   # step (=3000 iter) 阶段1结束, 此前因子=1.0
         rew_fwd_anneal_full = 120000    # step (=5000 iter) 退火完成, 因子=max
-        # Loop-v2 Round-2 (moderate-fwd-anneal): anneal_max 1.0->1.5 [单变量, 叠在R1基线上]:
-        # R1(cycle_time=1.0)首次达成single>0.8(123点同时fwd>0.3), 但F5显示late期fwd回落
-        # 0.20-0.23——强gpt吸引子(0.83)抑制前向速度。F1证明温和退火档(有效fwd scale
-        # 0.4-0.65, 即anneal_max≤1.6)能同时提升single和fwd(部分打破Pareto); F2证明满档
-        # 2.5×过冲毁步态(gpt崩0.74->0.22)。本轮选1.5×(有效scale 0.4->0.6), 恰在F1验证的
-        # 温和工作区上界。在更稳定的cycle_time=1.0基线上(gpt iter3000已达0.754), 温和前向
-        # 驱动应把fwd均值稳定拉过0.3同时保single>0.8。
-        # 数值估算: vx=0.3时 fwd reward 0.30->0.45(+50%); vx=0.477(峰)时 0.59->0.88≈gpt0.83(竞争但不碾压)。
-        # 阶段时序: iter0-3000 factor=1.0(gpt先稳, R1已证iter3000 gpt=0.754); iter3000-5000 ramp 1.0->1.5; iter5000+ 1.5恒定。
-        rew_fwd_anneal_max = 1.5        # Loop-v2 R2: 1.0->1.5 温和前向退火(有效scale 0.4->0.6)
+        rew_fwd_anneal_max = 1.0        # Loop-v2 R4: reset to 1.0 (disabled) — clean R1 baseline for paradigm pivot
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
@@ -454,15 +453,13 @@ class X1DHStandCfg(LeggedRobotCfg):
             #     线性 ramp: clamp(lift/0.05, 0, 1)×swing_mask
             #     bounce(3.4mm) raw≈0.068, 真跨步(5cm) raw≈1.0 — 始终正向梯度鼓励抬脚
             swing_lift = 0.4
-            # Loop-v2 Round-3 (swing-foot-forward) [新增reward项: 步幅长度信号]:
-            # R2诊断: fwd停滞0.27-0.29(combo点single>0.8∧fwd>0.3有123个,fwd达0.4-0.57)。
-            # 策略能力上能快走但默认短步幅碎步——swing_lift(0.4)只奖励抬脚UP不奖励向前REACH。
-            # swing_foot_forward奖励摆动脚世界系x速度(向前迈),capped 0.5m/s,swing-gated,cmd-gated。
-            # 与swing_lift配对=完整摆动质量信号(抬脚+迈步)。scale 0.4=同swing_lift,不主导。
-            # 数值估算: vx=0.4(目标)步幅0.3m→脚速~0.8m/s capped 0.5→raw~0.25/frame×0.4scale=0.10;
-            #          vx=0.27(现状)步幅0.15m→脚速~0.4→raw~0.13/frame×0.4scale=0.05。差距0.05/frame有梯度。
-            # 不可hack性: forward_progress(base速度)不奖励原地迈步; gpt要求正确接触相位。
-            swing_foot_forward = 0.4
+            # Loop-v2 R4 (reference-gait-template) [STRUCTURAL PIVOT - core reward]:
+            # 启用ref_joint_pos tracking reward(scale 0→1.0)作为DeepMimic式参考轨迹跟踪。
+            # 与use_ref_actions=True(动作注入参考)配对:动作注入提供起点,tracking reward防漂移。
+            # reward = exp(-2×||dof_pos - ref_dof_pos||) - 0.2×clamp(||diff||,0,0.5)
+            # 量级: 完美跟踪diff=0→r=1.0; 好(0.1rad)→0.79; 差(0.5rad)→0.27。scale1.0与gpt同量级。
+            # 范式转换: 从'策略涌现步态'变为'策略跟踪已知好的步态模板学平衡和转向'。
+            ref_joint_pos = 1.0  # Loop-v2 R4: 0.0→1.0 启用参考轨迹跟踪(范式核心)
             # ⑨-b forward_progress — 不可欺骗的前进 reward (用 base 实际前向速度)
             #     clamp(vx·sign(cmd), 0, 0.6)/0.6 — 必须真正前移才得分，振荡骗不到
             #     bounce(0.15m/s) raw≈0.25, 真走(0.6) raw≈1.0
