@@ -375,7 +375,16 @@ class X1DHStandCfg(LeggedRobotCfg):
         # scale0.4)。本轮=R16+cycle_time=1.0单变量, 干净归因步频对步态质量的影响。
         rew_fwd_anneal_warmup = 72000   # step (=3000 iter) 阶段1结束, 此前因子=1.0
         rew_fwd_anneal_full = 120000    # step (=5000 iter) 退火完成, 因子=max
-        rew_fwd_anneal_max = 1.0        # Loop-v2 R1: 2.5->1.0 禁用anneal(因子恒1.0),恢复R16基线
+        # Loop-v2 Round-2 (moderate-fwd-anneal): anneal_max 1.0->1.5 [单变量, 叠在R1基线上]:
+        # R1(cycle_time=1.0)首次达成single>0.8(123点同时fwd>0.3), 但F5显示late期fwd回落
+        # 0.20-0.23——强gpt吸引子(0.83)抑制前向速度。F1证明温和退火档(有效fwd scale
+        # 0.4-0.65, 即anneal_max≤1.6)能同时提升single和fwd(部分打破Pareto); F2证明满档
+        # 2.5×过冲毁步态(gpt崩0.74->0.22)。本轮选1.5×(有效scale 0.4->0.6), 恰在F1验证的
+        # 温和工作区上界。在更稳定的cycle_time=1.0基线上(gpt iter3000已达0.754), 温和前向
+        # 驱动应把fwd均值稳定拉过0.3同时保single>0.8。
+        # 数值估算: vx=0.3时 fwd reward 0.30->0.45(+50%); vx=0.477(峰)时 0.59->0.88≈gpt0.83(竞争但不碾压)。
+        # 阶段时序: iter0-3000 factor=1.0(gpt先稳, R1已证iter3000 gpt=0.754); iter3000-5000 ramp 1.0->1.5; iter5000+ 1.5恒定。
+        rew_fwd_anneal_max = 1.5        # Loop-v2 R2: 1.0->1.5 温和前向退火(有效scale 0.4->0.6)
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
