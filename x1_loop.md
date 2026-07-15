@@ -23,15 +23,13 @@
   - research_design_train：执行本轮设计、实现、远端训练
   - extract_findings：总结训练结果，把研究输出整理为结构化 findings
   - semantic_eval：判断本轮 findings 是否真正新增，以及是否结果优化
-  - reduce_progress：确定性 code 节点，根据 semantic_eval 更新
-  progress.json：
+  - reduce_progress：确定性 code 节点，根据 semantic_eval 更新progress.json：
     - 0 new findings 或 结果结果变差 → stale_count + 1
     - 否则 stale_count 清零或降低
     - stale_count >= 2 → status = pivot_required
     - stale_count >= 4 → status = attention_required
     - 其他正常进展 → status = healthy 或 stale
-  - state_writer：确定性 code 节点，append findings.jsonl、
-  directions_tried.json、iteration_log.jsonl，并原子更新 progress.json
+  - state_writer：更新 findings.jsonl、directions_tried.json 并更新 progress.json
   - route_by_status：根据 progress/status 路由下一步
 
   3. 路由规则
