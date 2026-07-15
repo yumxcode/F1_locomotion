@@ -114,7 +114,13 @@ class X1DHStandEnv(LeggedRobot):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
         self.last_feet_z = self.cfg.rewards.feet_to_ankle_distance
         self.feet_height = torch.zeros((self.num_envs, 2), device=self.device)
-        self.ref_dof_pos = torch.zeros((self.num_envs, self.num_actions), device=self.device)      
+        self.ref_dof_pos = torch.zeros((self.num_envs, self.num_actions), device=self.device)
+        # Loop-v3 iter1 (ref-gait-template-harvest): ref_action 初始化。
+        # use_ref_actions=True 时 step() `actions += self.ref_action` 在 reset()→step(zeros)
+        # 首帧即触发, 但 compute_ref_state()(ref_action 唯一赋值点) 此时尚未执行 →
+        # AttributeError 致 TASK_20260714_134 启动 177s 即崩(status6, 无训练数据)。
+        # ref_action=2*ref_dof_pos(ref_dof_pos 初始 zeros), zeros 初始化正确且无害。
+        self.ref_action = torch.zeros((self.num_envs, self.num_actions), device=self.device)      
         # V13: single_foot_contact 历史缓冲 (0.2s / dt 帧 @50Hz = 10 帧)
         grace_frames = int(self.cfg.rewards.single_contact_grace / self.dt)
         self.single_contact_history = torch.zeros((self.num_envs, grace_frames), device=self.device)
