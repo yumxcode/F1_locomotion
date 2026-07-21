@@ -56,15 +56,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         num_actions = 12
         num_envs = 4096
         episode_length_s = 24 #episode length in seconds
-        # Loop-v2 Round-4 (reference-gait-template) [STRUCTURAL PIVOT: 退出奖励工程范式]:
-        # 3轮标量化奖励工程(gait-cadence/moderate-anneal/swing-foot-forward)均在前向-步态Pareto墙内
-        # 调参。本轮范式转换:use_ref_actions=True使步态时钟生成的摆动轨迹(compute_ref_state)直接注入
-        # 动作空间——策略的输出变为对参考步态模板的修正(residual),而非从零发现步态。
-        # 机制:step()中 actions += ref_action(=2×swing_delta);target=0.5×(policy+ref_action)+default
-        #   → policy_output=0时 target=swing_delta+default=ref_dof_pos(参考即基准)。
-        # 与ref_joint_pos tracking reward(scale1.0)配对=DeepMimic式完整参考跟踪:
-        #   动作注入提供起点,tracking reward防止漂移。gpt(contact phase)保持提供接触时序约束。
-        use_ref_actions = True
+        # Graph-loop v3 iter0 (ref-gait-reward-only) [CORRECTIVE: 隔离动作注入导致的发散]:
+        # 收割 TASK_20260715_233(v2-R4 ref-gait-template 首次真实数据)发现:use_ref_actions=True
+        # 时 step() `actions += ref_action(=2×ref_dof_pos)` 把摆动 delta 以 2× 增益(经 action_scale
+        # 0.5 后 ±0.35rad 强制偏置膝目标)直接注入动作 → 无视平衡地把摆动腿推到完整摆动位 →
+        # 机器人被甩飞,zero_contact 飙到 0.93(基线 0.134)、ep_len 崩到 18 步、reward iter2 后单调降。
+        # 本轮关闭动作注入(use_ref_actions=False),仅保留 ref_joint_pos=1.0 温和参考跟踪 reward:
+        #   提供关节空间参考引导(梯度驱动,非强制动作偏置),与 gpt(接触相位)正交补充。
+        # 干净单变量隔离:回答"温和参考引导(无激活动作注入)是否优于接触涌现基线"。
+        use_ref_actions = False
         num_commands = 5 # sin_pos cos_pos vx vy vz
 
     class safety:
