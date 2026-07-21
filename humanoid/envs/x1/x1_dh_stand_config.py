@@ -453,13 +453,19 @@ class X1DHStandCfg(LeggedRobotCfg):
             #     线性 ramp: clamp(lift/0.05, 0, 1)×swing_mask
             #     bounce(3.4mm) raw≈0.068, 真跨步(5cm) raw≈1.0 — 始终正向梯度鼓励抬脚
             swing_lift = 0.4
+            # Graph-loop v3 iter1 (swing-foot-forward-clean) [新增reward项: 步幅长度信号, 干净单变量]:
+            # iter0 证伪 ref-gait-template 范式(死路)。回退到 v2-R1 干净基线(ref_joint_pos=0, anneal=1.0)
+            # 后唯一新变量: swing_foot_forward=0.4。v2-R3 曾在 1.5× 退火基线上激活它打破 Pareto(6.8× combo点)
+            # 并找到最优窗口 iter7000-8000(single0.800/fwd0.664/zero0.159), 但与退火叠加过冲(gpt缓降/tracking崩)。
+            # 本轮在无退火干净基线上单独激活: 测试 swing_foot_forward 能否维持 fwd>0.3 而不破坏 single>0.8。
+            swing_foot_forward = 0.4
             # Loop-v2 R4 (reference-gait-template) [STRUCTURAL PIVOT - core reward]:
             # 启用ref_joint_pos tracking reward(scale 0→1.0)作为DeepMimic式参考轨迹跟踪。
             # 与use_ref_actions=True(动作注入参考)配对:动作注入提供起点,tracking reward防漂移。
             # reward = exp(-2×||dof_pos - ref_dof_pos||) - 0.2×clamp(||diff||,0,0.5)
             # 量级: 完美跟踪diff=0→r=1.0; 好(0.1rad)→0.79; 差(0.5rad)→0.27。scale1.0与gpt同量级。
             # 范式转换: 从'策略涌现步态'变为'策略跟踪已知好的步态模板学平衡和转向'。
-            ref_joint_pos = 1.0  # Loop-v2 R4: 0.0→1.0 启用参考轨迹跟踪(范式核心)
+            ref_joint_pos = 0.0  # Graph-loop v3 iter1: revert to 0.0 (iter0 proved ref tracking hurts gait quality; clean v2-R1 baseline)
             # ⑨-b forward_progress — 不可欺骗的前进 reward (用 base 实际前向速度)
             #     clamp(vx·sign(cmd), 0, 0.6)/0.6 — 必须真正前移才得分，振荡骗不到
             #     bounce(0.15m/s) raw≈0.25, 真走(0.6) raw≈1.0
