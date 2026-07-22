@@ -383,7 +383,15 @@ class X1DHStandCfg(LeggedRobotCfg):
         # scale0.4)。本轮=R16+cycle_time=1.0单变量, 干净归因步频对步态质量的影响。
         rew_fwd_anneal_warmup = 72000   # step (=3000 iter) 阶段1结束, 此前因子=1.0
         rew_fwd_anneal_full = 120000    # step (=5000 iter) 退火完成, 因子=max
-        rew_fwd_anneal_max = 1.0        # Loop-v2 R4: reset to 1.0 (disabled) — clean R1 baseline for paradigm pivot
+        rew_fwd_anneal_max = 1.2        # Graph-loop v3 iter2 (fwd-mild-anneal-sustain): 1.0(disabled)→1.2
+        # 单一新变量: 在 iter1 证实的 swing_foot_forward=0.4 干净基线上, 启用最温和的前向退火。
+        # 动机: iter1(F3) swing_foot_forward=0.4 单独 → fwd 峰值 0.54@iter3100 但后期退化到 0.20
+        #   (Pareto 墙: gpt 收紧牺牲 fwd)。退火 warmup=iter3000 恰在 fwd 峰值处启动, 1.0→1.2 线性
+        #   ramp 至 iter5000, 提供 +20% 前向驱动力维持 fwd>0.3。
+        # 关键差异化: v2-R3 测过 swing+1.5× 退火→过冲(gpt缓降/tracking崩/bounce回升);
+        #   v1 iter16 测过纯 2.5×→严重过冲。1.2× 是远低于过冲边界的最温和档, 介于
+        #   iter1 无退火(fwd退化)与 v2-R3 1.5×(过冲)之间的未测区。前向退火触发时机(iter3000)
+        #   正好对齐 iter1 的 fwd 峰值, 顺势维持而非从零建立前向。
         # v6: walk_decay 已移除 — 用 swing scale + stability 降低来平衡
         # walk_decay = 0.3  # v5: removed, caused stability collapse
         # V10: only_positive_rewards=False — 让 penalty 有真实梯度推力
