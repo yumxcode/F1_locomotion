@@ -501,7 +501,16 @@ class X1DHStandCfg(LeggedRobotCfg):
             # 每帧连续匹配(cosine-consistency)。每帧密集可微, 不可被离散事件hack。
             # 替代 single_foot_contact(0.8) + alternating_contact(0.7) 两项, scale 0.8
             # 对齐原 single_foot_contact 量级(原主步态吸引子)。
-            gait_phase_tracking = 1.0  # R16: 0.8→1.0(+25%), 评审首选reward轴, 目标推single_contact>0.8(R12相位跟踪曾达0.805); 增强相位跟踪吸引子
+            gait_phase_tracking = 1.1  # Graph-loop v3 iter3 (gpt-mild-boost): 1.0→1.1(+10%), 目标推 single_contact 持续>0.8
+            # 单一新变量: 在 iter2 证实的 1.2× 退火基线上, 温和增强 gpt 吸引子。
+            # 动机: iter2(F4) 证明 1.2× 退火打破 Pareto(180 strict combo, fwd 持续 0.528)但 single 在
+            #   best window(iter7400-9400)均值仅 0.785, 未稳定>0.8。strict triple-target 点集中在
+            #   iter5000-7400(single 暂时破0.8), 之后 single 回落到 0.78。
+            # 假设: gpt 0.8→1.0 使 single 从 0.73→0.80(R16 记录), 1.0→1.1 应推到 0.81-0.82。
+            #   memory 警告 gpt↑→fwd↓(Δsingle/Δfwd≈-0.5), 但 iter2 的 1.2× 退火提供充足前向驱动力
+            #   (fwd_progress rew 0.81), 即使 gpt 1.1 略降 fwd, 退火应保持 fwd>0.3。
+            # 关键测试: single 能否稳定>0.8 同时 fwd 保持>0.3 → sustained strict triple-target co-satisfaction。
+            # 原 R16: 0.8→1.0(+25%), 评审首选reward轴; R12相位跟踪曾达 single 0.805
             # ⑩ 安全网
             dof_pos_limits = -10.
             # === V12 遗留 (scale=0, 函数体保留): ===
